@@ -6,7 +6,7 @@
 
     Routes
         /s/link - add steam account to user
-        /s/current - see game being played on linked steam account
+        /s/status - see game being played on linked steam account
         /s/recent - get recent steam games on linked account
 
     Functions
