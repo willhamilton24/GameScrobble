@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"context"
+	"time"
 	"github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
 	"github.com/chromedp/chromedp"
@@ -18,13 +19,22 @@ func main() {
 	})
 
 	router.Get("/s/status", func(c *routing.Context) error {
-		ctx, cancel := chromedp.NewContext(context.Background())
+		opts := append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.DisableGPU,
+			// Set the headless flag to false to display the browser window
+			chromedp.Flag("headless", false),
+			)
+			
+		ctx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+		ctx, cancel = chromedp.NewContext(ctx)
+
 		fmt.Println("context")
 		defer cancel()
-		game := ""
+		var game string
 		err := chromedp.Run(ctx,
-			chromedp.Navigate("https://steamcommunity.com/id/MatuPatluAnalysis"),
-			chromedp.WaitVisible(`[id="footerText"]`, chromedp.ByQuery),
+			//chromedp.EmulateViewport(1200, 2000),
+			chromedp.Navigate("https://steamcommunity.com/id/fybermain/"),
+			chromedp.Sleep(5*time.Second),
 			chromedp.Evaluate(`document.getElementsByClassName('profile_in_game_name')[0].innerHTML`, &game),
 		)
 		fmt.Println(game)
