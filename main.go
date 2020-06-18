@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"context"
 	"time"
+	"log"
 	"github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
 	"github.com/chromedp/chromedp"
+	//"go.mongodb.org/mongo-driver/bson"
+    "go.mongodb.org/mongo-driver/mongo"
+    "go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func getCurrentGame(c *routing.Context) error {
@@ -40,10 +44,8 @@ func serveWebapp() {
 	fs := &fasthttp.FS{
 		// Path to directory to serve.
 		Root: "index.html",
-	
 		// Generate index pages if client requests directory contents.
 		GenerateIndexPages: true,
-	
 		// Enable transparent compression to save network traffic.
 		Compress: true,
 	}
@@ -57,8 +59,55 @@ func serveWebapp() {
 	}
 }
 
+type Offer struct {
+	vendor string
+	digital bool
+	platform string
+	url string
+}
+
+type Game struct {
+	title string
+	devs []string
+	pubs []string
+	rDate string
+	metacritic int
+	pcOffers []string
+	xboxOffers []string
+	playstationOffers []string
+}
+
 func main() {
 	router := routing.New()
+
+	//
+	// MongoDB
+	//
+
+	// Set client options
+	clientOptions := options.Client().ApplyURI("mongodb+srv://admin:CzP41byffHs9CIVd@gamium1-7iud8.mongodb.net/Gamium>?retryWrites=true&w=majority")
+
+	// Connect to MongoDB
+	client, err := mongo.Connect(context.TODO(), clientOptions)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Check the connection
+	err = client.Ping(context.TODO(), nil)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Connected to MongoDB!")
+
+	//collection := client.Database("test").Collection("trainers")
+
+	//
+	// API
+	//
 	
 	router.Get("/", func(c *routing.Context) error {
 		fmt.Println("Hello, world!")
@@ -78,9 +127,13 @@ func main() {
 		// Check if Online
 		return getCurrentGame(c)
 	})
+
+	//
+	// Webapp
+	//
 	
 	go serveWebapp()
-	
+
 	panic(fasthttp.ListenAndServe(":8080", router.HandleRequest))
 }
 
