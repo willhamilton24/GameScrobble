@@ -17,13 +17,14 @@ func main() {
 		return nil
 	})
 
-	router.Get("/s/status/<id>", func(c *routing.Context) error {
+	router.Get("/s/status", func(c *routing.Context) error {
 		ctx, cancel := chromedp.NewContext(context.Background())
 		fmt.Println("context")
 		defer cancel()
 		game := ""
 		err := chromedp.Run(ctx,
-			chromedp.Navigate("https://steamcommunity.com/id/" + c.Param("id")),
+			chromedp.Navigate("https://steamcommunity.com/id/MatuPatluAnalysis"),
+			chromedp.WaitVisible(`[id="footerText"]`, chromedp.ByQuery),
 			chromedp.Evaluate(`document.getElementsByClassName('profile_in_game_name')[0].innerHTML`, &game),
 		)
 		fmt.Println(game)
