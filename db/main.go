@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 	routing "github.com/qiangxue/fasthttp-routing"
@@ -197,6 +198,9 @@ func scrapeSteam(latency time.Duration) {
 // Steam Accounts — official Web API (api.steampowered.com)
 //
 
+// steamIDPattern matches a Steam64 ID: exactly 17 digits.
+var steamIDPattern = regexp.MustCompile(`^[0-9]{17}$`)
+
 func steamAPIKey() string {
 	return os.Getenv("STEAM_API_KEY")
 }
@@ -218,10 +222,10 @@ func steamGet(path string) ([]byte, error) {
 // Query param: steam_id (Steam64 ID)
 func getCurrentGame(c *routing.Context) error {
 	steamID := string(c.QueryArgs().Peek("steam_id"))
-	if steamID == "" {
+	if !steamIDPattern.MatchString(steamID) {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"steam_id query parameter required"}`)
+		c.WriteString(`{"error":"steam_id must be a 17-digit Steam64 ID"}`)
 		return nil
 	}
 
@@ -229,7 +233,7 @@ func getCurrentGame(c *routing.Context) error {
 	if key == "" {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"STEAM_API_KEY not configured"}`)
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
 		return nil
 	}
 
@@ -237,7 +241,7 @@ func getCurrentGame(c *routing.Context) error {
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Steam API request failed"}`)
+		c.WriteString(`{"error":"Steam API request failed"}`)
 		return nil
 	}
 
@@ -245,14 +249,14 @@ func getCurrentGame(c *routing.Context) error {
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"failed to parse Steam API response"}`)
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
 		return nil
 	}
 
 	players := v.GetArray("response", "players")
 	c.SetContentType("application/json")
 	if len(players) == 0 {
-		fmt.Fprintf(c, `{"error":"Steam account not found"}`)
+		c.WriteString(`{"error":"Steam account not found"}`)
 		return nil
 	}
 
@@ -261,14 +265,14 @@ func getCurrentGame(c *routing.Context) error {
 	gameID := string(player.GetStringBytes("gameid"))
 
 	if gameName == "" {
-		fmt.Fprintf(c, `{"playing":false}`)
+		c.WriteString(`{"playing":false}`)
 	} else {
 		out, _ := json.Marshal(map[string]interface{}{
 			"playing": true,
 			"game":    gameName,
 			"game_id": gameID,
 		})
-		fmt.Fprintf(c, string(out))
+		c.Write(out)
 	}
 	return nil
 }
@@ -277,10 +281,10 @@ func getCurrentGame(c *routing.Context) error {
 // Query param: steam_id (Steam64 ID)
 func getRecentGames(c *routing.Context) error {
 	steamID := string(c.QueryArgs().Peek("steam_id"))
-	if steamID == "" {
+	if !steamIDPattern.MatchString(steamID) {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"steam_id query parameter required"}`)
+		c.WriteString(`{"error":"steam_id must be a 17-digit Steam64 ID"}`)
 		return nil
 	}
 
@@ -288,7 +292,7 @@ func getRecentGames(c *routing.Context) error {
 	if key == "" {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"STEAM_API_KEY not configured"}`)
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
 		return nil
 	}
 
@@ -296,7 +300,7 @@ func getRecentGames(c *routing.Context) error {
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Steam API request failed"}`)
+		c.WriteString(`{"error":"Steam API request failed"}`)
 		return nil
 	}
 
@@ -304,14 +308,14 @@ func getRecentGames(c *routing.Context) error {
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"failed to parse Steam API response"}`)
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
 		return nil
 	}
 
 	games := v.Get("response", "games")
 	c.SetContentType("application/json")
 	if games == nil {
-		fmt.Fprintf(c, `{"games":[]}`)
+		c.WriteString(`{"games":[]}`)
 	} else {
 		fmt.Fprintf(c, `{"games":%s}`, games.String())
 	}
@@ -322,10 +326,10 @@ func getRecentGames(c *routing.Context) error {
 // Body: { "user_id": "...", "steam_id": "76561198..." }
 func linkAccount(c *routing.Context) error {
 	var link SteamLink
-	if err := json.Unmarshal(c.PostBody(), &link); err != nil || link.SteamID == "" {
+	if err := json.Unmarshal(c.PostBody(), &link); err != nil || link.UserID == "" || !steamIDPattern.MatchString(link.SteamID) {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"request body must be JSON with user_id and steam_id"}`)
+		c.WriteString(`{"error":"request body must be JSON with user_id and a 17-digit steam_id"}`)
 		return nil
 	}
 
@@ -333,7 +337,7 @@ func linkAccount(c *routing.Context) error {
 	if key == "" {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"STEAM_API_KEY not configured"}`)
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
 		return nil
 	}
 
@@ -342,7 +346,7 @@ func linkAccount(c *routing.Context) error {
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"could not verify Steam account"}`)
+		c.WriteString(`{"error":"could not verify Steam account"}`)
 		return nil
 	}
 
@@ -351,7 +355,7 @@ func linkAccount(c *routing.Context) error {
 	if len(players) == 0 {
 		c.SetStatusCode(404)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Steam account not found"}`)
+		c.WriteString(`{"error":"Steam account not found"}`)
 		return nil
 	}
 
@@ -365,7 +369,7 @@ func linkAccount(c *routing.Context) error {
 	if _, err = collection.UpdateOne(context.TODO(), filter, update, upsert); err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"failed to save Steam link"}`)
+		c.WriteString(`{"error":"failed to save Steam link"}`)
 		return nil
 	}
 
@@ -374,7 +378,7 @@ func linkAccount(c *routing.Context) error {
 		"success":      true,
 		"persona_name": personaName,
 	})
-	fmt.Fprintf(c, string(out))
+	c.Write(out)
 	return nil
 }
 

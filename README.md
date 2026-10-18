@@ -23,6 +23,12 @@
 +++Blizzard /b
 +++Epic /e
 
+## Setup
+
+The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam Web API and require one environment variable:
+
+- `STEAM_API_KEY` — a Steam Web API key, obtained at https://steamcommunity.com/dev/apikey. Set it in the deploy environment (e.g. the Render service's env vars); never commit the value to the repo.
+
 ## 💰 Path to Revenue
 "Last.fm for games" — unified play-history tracking across Steam/Xbox/PSN/Epic — can monetize via premium stats profiles and affiliate game-deal links, but only Steam is even stubbed and the whole product (API, auth, frontend) remains to be built.
 
