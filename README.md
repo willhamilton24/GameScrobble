@@ -1,3 +1,5 @@
+![Concept](https://img.shields.io/badge/Concept-C-yellow) ![Effort to Cashflow](https://img.shields.io/badge/Effort_to_Cashflow-85%2F100-red)
+
 +++User /u
 +++Steam /s
     Links
@@ -20,3 +22,15 @@
 +++Riot /r
 +++Blizzard /b
 +++Epic /e
+
+## 💰 Path to Revenue
+"Last.fm for games" — unified play-history tracking across Steam/Xbox/PSN/Epic — can monetize via premium stats profiles and affiliate game-deal links, but only Steam is even stubbed and the whole product (API, auth, frontend) remains to be built.
+
+### Release TODOs
+- [ ] Finish the Steam integration end-to-end using official Web API keys (drop the ChromeDP password-login approach — it is a security and ToS liability)
+- [ ] Implement user accounts + OAuth linking for Xbox, PSN, and Epic (currently just route placeholders)
+- [ ] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
+- [ ] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
+- [ ] Deploy API (Fly.io/Render) + Mongo Atlas with scheduled scrobble polling
+- [ ] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
+- [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention
