@@ -1,72 +1,90 @@
 package main
 
 import (
-	"fmt"
 	"context"
-	"time"
-	"log"
-	"strconv"
-	//"encoding/json"
-	"github.com/qiangxue/fasthttp-routing"
+	"encoding/json"
+	"fmt"
+	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
-	"github.com/chromedp/chromedp"
 	"go.mongodb.org/mongo-driver/bson"
-    "go.mongodb.org/mongo-driver/mongo"
-    "go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"log"
+	"os"
+	"regexp"
+	"strconv"
+	"time"
 )
 
 var mongoClient *mongo.Client
 
+const steamRequestTimeout = 5 * time.Second
+const mongoUpdateTimeout = 5 * time.Second
+
+var steamHTTPGet = fasthttp.GetTimeout
+
+// Only trusted authentication middleware may set this context key. No current
+// route sets it, so linking remains disabled until authentication is implemented.
+type authenticatedUserIDKey struct{}
+
+type steamLinkUpdater interface {
+	UpdateOne(context.Context, interface{}, interface{}, ...*options.UpdateOptions) (*mongo.UpdateResult, error)
+}
+
+func saveSteamLink(parent context.Context, collection steamLinkUpdater, link SteamLink) error {
+	ctx, cancel := context.WithTimeout(parent, mongoUpdateTimeout)
+	defer cancel()
+	_, err := collection.UpdateOne(ctx,
+		bson.D{{Key: "user_id", Value: link.UserID}},
+		bson.D{{Key: "$set", Value: link}}, options.Update().SetUpsert(true))
+	return err
+}
+
 type Offer struct {
-	Vendor string
-	Digital bool
-	Platform string
-	Url string
+	Vendor     string
+	Digital    bool
+	Platform   string
+	Url        string
 	InternalId string
 }
 
 type Game struct {
-	Title string
-	Img string
-	Dev string
-	Pub string
-	RDate string
-	Metacritic string
-	PcOffers []Offer
-	XboxOffers []Offer
+	Title             string
+	Img               string
+	Dev               string
+	Pub               string
+	RDate             string
+	Metacritic        string
+	PcOffers          []Offer
+	XboxOffers        []Offer
 	PlaystationOffers []Offer
-	SwitchOffers []Offer
-	Dlc []DLC
-	Platforms []string
+	SwitchOffers      []Offer
+	Dlc               []DLC
+	Platforms         []string
 }
 
 type DLC struct {
-	game Game
-	title string
-	img string
-	rDate string
-	pcOffers []Offer
-	xboxOffers []Offer
+	game              Game
+	title             string
+	img               string
+	rDate             string
+	pcOffers          []Offer
+	xboxOffers        []Offer
 	playstationOffers []Offer
-	switchOffers []Offer
+	switchOffers      []Offer
 }
 
 type SteamResult struct {
 	Name string
 }
 
-// func createOffer(v string, d bool, p string, u string, i string) {
-
-// }
-
-// func createDLC(g Game, t string, i string, r string, offer Offer) {
-
-// }
-
-// func createGame(t string, i string, d []string, p string[], r string, m int, offer Offer) {
-
-// }
+// SteamLink records an unverified association; public profile lookup does not prove ownership.
+type SteamLink struct {
+	UserID            string `bson:"user_id" json:"user_id"`
+	SteamID           string `bson:"steam_id" json:"steam_id"`
+	OwnershipVerified bool   `bson:"ownership_verified" json:"ownership_verified"`
+}
 
 //
 // Steam Pricing
@@ -76,7 +94,7 @@ func readSteamDLC(i int, g Game) string {
 	var body []byte
 	id := strconv.Itoa(i)
 
-	status, resp, err := fasthttp.Get(body, "https://store.steampowered.com/api/appdetails?appids=" + id)
+	status, resp, err := steamHTTPGet(body, "https://store.steampowered.com/api/appdetails?appids="+id, steamRequestTimeout)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -92,7 +110,7 @@ func getDLCArray(data []byte, appid string) []int {
 	dlcs := []int{}
 	x := 0
 	for {
-	  	if id := fastjson.GetInt(data, appid, "data", "dlc", strconv.Itoa(x)); id == 0 {
+		if id := fastjson.GetInt(data, appid, "data", "dlc", strconv.Itoa(x)); id == 0 {
 			break
 		} else {
 			dlcs = append(dlcs, id)
@@ -106,7 +124,7 @@ func readSteamGame(i int) {
 	var body []byte
 	id := strconv.Itoa(i)
 
-	status, resp, err := fasthttp.Get(body, "https://store.steampowered.com/api/appdetails?appids=" + id)
+	status, resp, err := steamHTTPGet(body, "https://store.steampowered.com/api/appdetails?appids="+id, steamRequestTimeout)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -135,18 +153,18 @@ func readSteamGame(i int) {
 
 				// Make Game Struct
 				newGame := Game{
-					Title: title,
-					Img: fastjson.GetString(resp, id, "data", "header_image"),
-					Dev: fastjson.GetString(resp, id, "data", "developers", "0"),
-					Pub: fastjson.GetString(resp, id, "data", "publishers", "0"),
-					RDate: fastjson.GetString(resp, id, "data", "release_date", "date"),
-					Metacritic: fastjson.GetString(resp, id, "data", "metacritic", "url"),
-					PcOffers: []Offer{},
-					XboxOffers: []Offer{},
+					Title:             title,
+					Img:               fastjson.GetString(resp, id, "data", "header_image"),
+					Dev:               fastjson.GetString(resp, id, "data", "developers", "0"),
+					Pub:               fastjson.GetString(resp, id, "data", "publishers", "0"),
+					RDate:             fastjson.GetString(resp, id, "data", "release_date", "date"),
+					Metacritic:        fastjson.GetString(resp, id, "data", "metacritic", "url"),
+					PcOffers:          []Offer{},
+					XboxOffers:        []Offer{},
 					PlaystationOffers: []Offer{},
-					SwitchOffers: []Offer{},
-					Dlc: []DLC{},
-					Platforms: []string{},
+					SwitchOffers:      []Offer{},
+					Dlc:               []DLC{},
+					Platforms:         []string{},
 				}
 				if fastjson.GetBool(resp, id, "data", "platforms", "windows") {
 					newGame.Platforms = append(newGame.Platforms, "windows")
@@ -161,10 +179,10 @@ func readSteamGame(i int) {
 				// Offer
 				appid := strconv.Itoa(fastjson.GetInt(resp, id, "data", "steam_appid"))
 				newOffer := Offer{
-					Vendor: "steam",
-					Digital: true,
-					Platform: "pc",
-					Url: "https://store.steampowered.com/app/" + appid + "/",
+					Vendor:     "steam",
+					Digital:    true,
+					Platform:   "pc",
+					Url:        "https://store.steampowered.com/app/" + appid + "/",
 					InternalId: appid,
 				}
 				fmt.Println(newOffer)
@@ -173,7 +191,9 @@ func readSteamGame(i int) {
 				fmt.Println(newGame)
 
 				// Add to DB
-				insertResult, err2 := collection.InsertOne(context.TODO(), newGame)
+				writeCtx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+				insertResult, err2 := collection.InsertOne(writeCtx, newGame)
+				cancel()
 				if err2 != nil {
 					log.Fatal(err)
 				}
@@ -187,46 +207,222 @@ func readSteamGame(i int) {
 			// Offer
 		}
 
-		
 	}
 
 }
 
 func scrapeSteam(latency time.Duration) {
-	for i := 0;  i < 1000000; i += 10 {
+	for i := 0; i < 1000000; i += 10 {
 		readSteamGame(i)
 		time.Sleep(latency * time.Millisecond)
 	}
 }
 
 //
-// Steam Accounts
-// 
+// Steam Accounts — official Web API (api.steampowered.com)
+//
 
-func getCurrentGame(c *routing.Context) error {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.DisableGPU,
-		// Set the headless flag to false to display the browser window
-		chromedp.Flag("headless", false),
-		)
-		
-	ctx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	ctx, cancel = chromedp.NewContext(ctx)
+// steamIDPattern matches a Steam64 ID: exactly 17 digits.
+var steamIDPattern = regexp.MustCompile(`^[0-9]{17}$`)
 
-	fmt.Println("context")
-	defer cancel()
-	var game string
-	err := chromedp.Run(ctx,
-		//chromedp.EmulateViewport(1200, 2000),
-		chromedp.Navigate("https://steamcommunity.com/id/fybermain/"),
-		chromedp.Sleep(5*time.Second),
-		chromedp.Evaluate(`document.getElementsByClassName('profile_in_game_name')[0].innerHTML`, &game),
-	)
-	fmt.Println(game)
+func steamAPIKey() string {
+	return os.Getenv("STEAM_API_KEY")
+}
+
+// steamGet performs a GET against the Steam Web API and returns the response body.
+func steamGet(path string) ([]byte, error) {
+	var body []byte
+	status, resp, err := steamHTTPGet(body, "https://api.steampowered.com"+path, steamRequestTimeout)
 	if err != nil {
-		fmt.Println(err.Error())
+		return nil, err
 	}
-	fmt.Fprintf(c, game)
+	if status != 200 {
+		return nil, fmt.Errorf("Steam API returned status %d", status)
+	}
+	return resp, nil
+}
+
+// getCurrentGame returns the game a Steam user is currently playing (if any).
+// Query param: steam_id (Steam64 ID)
+func getCurrentGame(c *routing.Context) error {
+	steamID := string(c.QueryArgs().Peek("steam_id"))
+	if !steamIDPattern.MatchString(steamID) {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"steam_id must be a 17-digit Steam64 ID"}`)
+		return nil
+	}
+
+	key := steamAPIKey()
+	if key == "" {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
+		return nil
+	}
+
+	resp, err := steamGet("/ISteamUser/GetPlayerSummaries/v0002/?key=" + key + "&steamids=" + steamID)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"Steam API request failed"}`)
+		return nil
+	}
+
+	v, err := fastjson.ParseBytes(resp)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
+		return nil
+	}
+
+	players := v.GetArray("response", "players")
+	c.SetContentType("application/json")
+	if len(players) == 0 {
+		c.WriteString(`{"error":"Steam account not found"}`)
+		return nil
+	}
+
+	player := players[0]
+	gameName := string(player.GetStringBytes("gameextrainfo"))
+	gameID := string(player.GetStringBytes("gameid"))
+
+	if gameName == "" {
+		c.WriteString(`{"playing":false}`)
+	} else {
+		out, _ := json.Marshal(map[string]interface{}{
+			"playing": true,
+			"game":    gameName,
+			"game_id": gameID,
+		})
+		c.Write(out)
+	}
+	return nil
+}
+
+// getRecentGames returns the last 10 games played on a Steam account.
+// Query param: steam_id (Steam64 ID)
+func getRecentGames(c *routing.Context) error {
+	steamID := string(c.QueryArgs().Peek("steam_id"))
+	if !steamIDPattern.MatchString(steamID) {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"steam_id must be a 17-digit Steam64 ID"}`)
+		return nil
+	}
+
+	key := steamAPIKey()
+	if key == "" {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
+		return nil
+	}
+
+	resp, err := steamGet("/IPlayerService/GetRecentlyPlayedGames/v0001/?key=" + key + "&steamid=" + steamID + "&count=10&format=json")
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"Steam API request failed"}`)
+		return nil
+	}
+
+	v, err := fastjson.ParseBytes(resp)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
+		return nil
+	}
+
+	games := v.Get("response", "games")
+	c.SetContentType("application/json")
+	if games == nil {
+		c.WriteString(`{"games":[]}`)
+	} else {
+		fmt.Fprintf(c, `{"games":%s}`, games.String())
+	}
+	return nil
+}
+
+// linkAccount stores an unverified Steam association for an authenticated user.
+// Body: { "steam_id": "76561198..." }; an optional user_id must match the session.
+func linkAccount(c *routing.Context) error {
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
+	if userID == "" {
+		c.SetStatusCode(403)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"Steam linking is disabled until server authentication is available"}`)
+		return nil
+	}
+	var link SteamLink
+	if err := json.Unmarshal(c.PostBody(), &link); err != nil || !steamIDPattern.MatchString(link.SteamID) {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"request body must be JSON with a 17-digit steam_id"}`)
+		return nil
+	}
+
+	if link.UserID != "" && link.UserID != userID {
+		c.SetStatusCode(403)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"cannot modify another user's Steam link"}`)
+		return nil
+	}
+	link.UserID = userID
+	link.OwnershipVerified = false
+
+	key := steamAPIKey()
+	if key == "" {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"STEAM_API_KEY not configured"}`)
+		return nil
+	}
+
+	// Check existence only: a public Steam profile does not prove ownership.
+	resp, err := steamGet("/ISteamUser/GetPlayerSummaries/v0002/?key=" + key + "&steamids=" + link.SteamID)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"could not look up Steam account"}`)
+		return nil
+	}
+
+	v, err := fastjson.ParseBytes(resp)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
+		return nil
+	}
+	players := v.GetArray("response", "players")
+	if len(players) == 0 {
+		c.SetStatusCode(404)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"Steam account not found"}`)
+		return nil
+	}
+
+	personaName := string(players[0].GetStringBytes("personaname"))
+
+	// Upsert the link in MongoDB
+	collection := mongoClient.Database("Gamium").Collection("steam_links")
+	if err = saveSteamLink(c.RequestCtx, collection, link); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to save Steam link"}`)
+		return nil
+	}
+
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]interface{}{
+		"success":            true,
+		"persona_name":       personaName,
+		"ownership_verified": false,
+	})
+	c.Write(out)
 	return nil
 }
 
@@ -243,7 +439,7 @@ func serveWebapp() {
 		// Enable transparent compression to save network traffic.
 		Compress: true,
 	}
-	
+
 	// Create request handler for serving static files.
 	h := fs.NewRequestHandler()
 
@@ -296,48 +492,41 @@ func main() {
 	//
 	// API
 	//
-	
+
 	router.Get("/", func(c *routing.Context) error {
-		fmt.Println("Hello, world!")
 		fmt.Fprintf(c, "Gamium API v1.0.0")
 		return nil
 	})
 
 	// Game Info Route
 	router.Get("/game/<title>", func(c *routing.Context) error {
-		fmt.Println("Hello, world!")
 		fmt.Fprintf(c, "Gamium API v1.0.0")
 		return nil
 	})
 
 	// Search
 	router.Get("/search/<term>", func(c *routing.Context) error {
-		fmt.Println("Hello, world!")
 		fmt.Fprintf(c, "Gamium API v1.0.0")
 		return nil
 	})
 
-
-
 	router.Post("/s/link", func(c *routing.Context) error {
-		// Authenticate User
-		// Verify Steam Credentials
-		// Load Library Data
-		// Save
-		return nil
+		return linkAccount(c)
 	})
 
 	router.Get("/s/status", func(c *routing.Context) error {
-		// Check if Online
 		return getCurrentGame(c)
+	})
+
+	router.Get("/s/recent", func(c *routing.Context) error {
+		return getRecentGames(c)
 	})
 
 	//
 	// Webapp
 	//
-	
+
 	go serveWebapp()
 
 	panic(fasthttp.ListenAndServe(":8080", router.HandleRequest))
 }
-
