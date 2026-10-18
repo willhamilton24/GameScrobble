@@ -4,63 +4,86 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
-	"regexp"
-	"strconv"
-	"time"
 	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"log"
+	"os"
+	"regexp"
+	"strconv"
+	"time"
 )
 
 var mongoClient *mongo.Client
 
+const steamRequestTimeout = 5 * time.Second
+const mongoUpdateTimeout = 5 * time.Second
+
+var steamHTTPGet = fasthttp.GetTimeout
+
+// Only trusted authentication middleware may set this context key. No current
+// route sets it, so linking remains disabled until authentication is implemented.
+type authenticatedUserIDKey struct{}
+
+type steamLinkUpdater interface {
+	UpdateOne(context.Context, interface{}, interface{}, ...*options.UpdateOptions) (*mongo.UpdateResult, error)
+}
+
+func saveSteamLink(parent context.Context, collection steamLinkUpdater, link SteamLink) error {
+	ctx, cancel := context.WithTimeout(parent, mongoUpdateTimeout)
+	defer cancel()
+	_, err := collection.UpdateOne(ctx,
+		bson.D{{Key: "user_id", Value: link.UserID}},
+		bson.D{{Key: "$set", Value: link}}, options.Update().SetUpsert(true))
+	return err
+}
+
 type Offer struct {
-	Vendor string
-	Digital bool
-	Platform string
-	Url string
+	Vendor     string
+	Digital    bool
+	Platform   string
+	Url        string
 	InternalId string
 }
 
 type Game struct {
-	Title string
-	Img string
-	Dev string
-	Pub string
-	RDate string
-	Metacritic string
-	PcOffers []Offer
-	XboxOffers []Offer
+	Title             string
+	Img               string
+	Dev               string
+	Pub               string
+	RDate             string
+	Metacritic        string
+	PcOffers          []Offer
+	XboxOffers        []Offer
 	PlaystationOffers []Offer
-	SwitchOffers []Offer
-	Dlc []DLC
-	Platforms []string
+	SwitchOffers      []Offer
+	Dlc               []DLC
+	Platforms         []string
 }
 
 type DLC struct {
-	game Game
-	title string
-	img string
-	rDate string
-	pcOffers []Offer
-	xboxOffers []Offer
+	game              Game
+	title             string
+	img               string
+	rDate             string
+	pcOffers          []Offer
+	xboxOffers        []Offer
 	playstationOffers []Offer
-	switchOffers []Offer
+	switchOffers      []Offer
 }
 
 type SteamResult struct {
 	Name string
 }
 
-// SteamLink associates a platform user ID with a Steam64 ID.
+// SteamLink records an unverified association; public profile lookup does not prove ownership.
 type SteamLink struct {
-	UserID  string `bson:"user_id" json:"user_id"`
-	SteamID string `bson:"steam_id" json:"steam_id"`
+	UserID            string `bson:"user_id" json:"user_id"`
+	SteamID           string `bson:"steam_id" json:"steam_id"`
+	OwnershipVerified bool   `bson:"ownership_verified" json:"ownership_verified"`
 }
 
 //
@@ -71,7 +94,7 @@ func readSteamDLC(i int, g Game) string {
 	var body []byte
 	id := strconv.Itoa(i)
 
-	status, resp, err := fasthttp.Get(body, "https://store.steampowered.com/api/appdetails?appids=" + id)
+	status, resp, err := steamHTTPGet(body, "https://store.steampowered.com/api/appdetails?appids="+id, steamRequestTimeout)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -87,7 +110,7 @@ func getDLCArray(data []byte, appid string) []int {
 	dlcs := []int{}
 	x := 0
 	for {
-	  	if id := fastjson.GetInt(data, appid, "data", "dlc", strconv.Itoa(x)); id == 0 {
+		if id := fastjson.GetInt(data, appid, "data", "dlc", strconv.Itoa(x)); id == 0 {
 			break
 		} else {
 			dlcs = append(dlcs, id)
@@ -101,7 +124,7 @@ func readSteamGame(i int) {
 	var body []byte
 	id := strconv.Itoa(i)
 
-	status, resp, err := fasthttp.Get(body, "https://store.steampowered.com/api/appdetails?appids=" + id)
+	status, resp, err := steamHTTPGet(body, "https://store.steampowered.com/api/appdetails?appids="+id, steamRequestTimeout)
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -130,18 +153,18 @@ func readSteamGame(i int) {
 
 				// Make Game Struct
 				newGame := Game{
-					Title: title,
-					Img: fastjson.GetString(resp, id, "data", "header_image"),
-					Dev: fastjson.GetString(resp, id, "data", "developers", "0"),
-					Pub: fastjson.GetString(resp, id, "data", "publishers", "0"),
-					RDate: fastjson.GetString(resp, id, "data", "release_date", "date"),
-					Metacritic: fastjson.GetString(resp, id, "data", "metacritic", "url"),
-					PcOffers: []Offer{},
-					XboxOffers: []Offer{},
+					Title:             title,
+					Img:               fastjson.GetString(resp, id, "data", "header_image"),
+					Dev:               fastjson.GetString(resp, id, "data", "developers", "0"),
+					Pub:               fastjson.GetString(resp, id, "data", "publishers", "0"),
+					RDate:             fastjson.GetString(resp, id, "data", "release_date", "date"),
+					Metacritic:        fastjson.GetString(resp, id, "data", "metacritic", "url"),
+					PcOffers:          []Offer{},
+					XboxOffers:        []Offer{},
 					PlaystationOffers: []Offer{},
-					SwitchOffers: []Offer{},
-					Dlc: []DLC{},
-					Platforms: []string{},
+					SwitchOffers:      []Offer{},
+					Dlc:               []DLC{},
+					Platforms:         []string{},
 				}
 				if fastjson.GetBool(resp, id, "data", "platforms", "windows") {
 					newGame.Platforms = append(newGame.Platforms, "windows")
@@ -156,10 +179,10 @@ func readSteamGame(i int) {
 				// Offer
 				appid := strconv.Itoa(fastjson.GetInt(resp, id, "data", "steam_appid"))
 				newOffer := Offer{
-					Vendor: "steam",
-					Digital: true,
-					Platform: "pc",
-					Url: "https://store.steampowered.com/app/" + appid + "/",
+					Vendor:     "steam",
+					Digital:    true,
+					Platform:   "pc",
+					Url:        "https://store.steampowered.com/app/" + appid + "/",
 					InternalId: appid,
 				}
 				fmt.Println(newOffer)
@@ -168,7 +191,9 @@ func readSteamGame(i int) {
 				fmt.Println(newGame)
 
 				// Add to DB
-				insertResult, err2 := collection.InsertOne(context.TODO(), newGame)
+				writeCtx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+				insertResult, err2 := collection.InsertOne(writeCtx, newGame)
+				cancel()
 				if err2 != nil {
 					log.Fatal(err)
 				}
@@ -182,13 +207,12 @@ func readSteamGame(i int) {
 			// Offer
 		}
 
-
 	}
 
 }
 
 func scrapeSteam(latency time.Duration) {
-	for i := 0;  i < 1000000; i += 10 {
+	for i := 0; i < 1000000; i += 10 {
 		readSteamGame(i)
 		time.Sleep(latency * time.Millisecond)
 	}
@@ -208,7 +232,7 @@ func steamAPIKey() string {
 // steamGet performs a GET against the Steam Web API and returns the response body.
 func steamGet(path string) ([]byte, error) {
 	var body []byte
-	status, resp, err := fasthttp.Get(body, "https://api.steampowered.com"+path)
+	status, resp, err := steamHTTPGet(body, "https://api.steampowered.com"+path, steamRequestTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -322,16 +346,32 @@ func getRecentGames(c *routing.Context) error {
 	return nil
 }
 
-// linkAccount links a Steam64 ID to a user account.
-// Body: { "user_id": "...", "steam_id": "76561198..." }
+// linkAccount stores an unverified Steam association for an authenticated user.
+// Body: { "steam_id": "76561198..." }; an optional user_id must match the session.
 func linkAccount(c *routing.Context) error {
-	var link SteamLink
-	if err := json.Unmarshal(c.PostBody(), &link); err != nil || link.UserID == "" || !steamIDPattern.MatchString(link.SteamID) {
-		c.SetStatusCode(400)
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
+	if userID == "" {
+		c.SetStatusCode(403)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"request body must be JSON with user_id and a 17-digit steam_id"}`)
+		c.WriteString(`{"error":"Steam linking is disabled until server authentication is available"}`)
 		return nil
 	}
+	var link SteamLink
+	if err := json.Unmarshal(c.PostBody(), &link); err != nil || !steamIDPattern.MatchString(link.SteamID) {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"request body must be JSON with a 17-digit steam_id"}`)
+		return nil
+	}
+
+	if link.UserID != "" && link.UserID != userID {
+		c.SetStatusCode(403)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"cannot modify another user's Steam link"}`)
+		return nil
+	}
+	link.UserID = userID
+	link.OwnershipVerified = false
 
 	key := steamAPIKey()
 	if key == "" {
@@ -341,16 +381,22 @@ func linkAccount(c *routing.Context) error {
 		return nil
 	}
 
-	// Verify the Steam ID resolves to a real account
+	// Check existence only: a public Steam profile does not prove ownership.
 	resp, err := steamGet("/ISteamUser/GetPlayerSummaries/v0002/?key=" + key + "&steamids=" + link.SteamID)
 	if err != nil {
 		c.SetStatusCode(502)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"could not verify Steam account"}`)
+		c.WriteString(`{"error":"could not look up Steam account"}`)
 		return nil
 	}
 
-	v, _ := fastjson.ParseBytes(resp)
+	v, err := fastjson.ParseBytes(resp)
+	if err != nil {
+		c.SetStatusCode(502)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to parse Steam API response"}`)
+		return nil
+	}
 	players := v.GetArray("response", "players")
 	if len(players) == 0 {
 		c.SetStatusCode(404)
@@ -363,10 +409,7 @@ func linkAccount(c *routing.Context) error {
 
 	// Upsert the link in MongoDB
 	collection := mongoClient.Database("Gamium").Collection("steam_links")
-	filter := bson.D{{"user_id", link.UserID}}
-	update := bson.D{{"$set", link}}
-	upsert := options.Update().SetUpsert(true)
-	if _, err = collection.UpdateOne(context.TODO(), filter, update, upsert); err != nil {
+	if err = saveSteamLink(c.RequestCtx, collection, link); err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to save Steam link"}`)
@@ -375,8 +418,9 @@ func linkAccount(c *routing.Context) error {
 
 	c.SetContentType("application/json")
 	out, _ := json.Marshal(map[string]interface{}{
-		"success":      true,
-		"persona_name": personaName,
+		"success":            true,
+		"persona_name":       personaName,
+		"ownership_verified": false,
 	})
 	c.Write(out)
 	return nil
