@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -454,7 +455,12 @@ func serveWebapp() {
 //
 
 func pollUserScrobbles(steamID, userID, key string) {
-	resp, err := steamGet("/IPlayerService/GetRecentlyPlayedGames/v0001/?key=" + key + "&steamid=" + steamID + "&count=10&format=json")
+	query := url.Values{}
+	query.Set("key", key)
+	query.Set("steamid", steamID)
+	query.Set("count", "10")
+	query.Set("format", "json")
+	resp, err := steamGet("/IPlayerService/GetRecentlyPlayedGames/v0001/?" + query.Encode())
 	if err != nil {
 		log.Printf("scrobble poller: Steam API error for %s: %v", steamID, err)
 		return

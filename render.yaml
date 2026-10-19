@@ -1,7 +1,7 @@
 services:
   - type: web
     name: gamescrobble-api
-    env: go
+    runtime: go
     plan: free
     buildCommand: go build -o server .
     startCommand: ./server
