@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -445,13 +446,113 @@ func serveWebapp() {
 
 	// Start the server.
 	if err := fasthttp.ListenAndServe(":3000", h); err != nil {
-		fmt.Println("error in ListenAndServe: %s", err)
+		fmt.Println("error in ListenAndServe:", err)
 	}
 }
 
 //
 // MAIN
 //
+
+func pollUserScrobbles(steamID, userID, key string) {
+	query := url.Values{}
+	query.Set("key", key)
+	query.Set("steamid", steamID)
+	query.Set("count", "10")
+	query.Set("format", "json")
+	resp, err := steamGet("/IPlayerService/GetRecentlyPlayedGames/v0001/?" + query.Encode())
+	if err != nil {
+		log.Printf("scrobble poller: Steam API error for %s: %v", steamID, err)
+		return
+	}
+
+	v, err := fastjson.ParseBytes(resp)
+	if err != nil {
+		log.Printf("scrobble poller: parse error for %s: %v", steamID, err)
+		return
+	}
+
+	games := v.GetArray("response", "games")
+	if len(games) == 0 {
+		return
+	}
+
+	coll := mongoClient.Database("Gamium").Collection("scrobbles")
+	now := time.Now().UTC()
+
+	for _, g := range games {
+		appID := g.GetInt("appid")
+		name := string(g.GetStringBytes("name"))
+		playtimeTotal := g.GetInt("playtime_forever")
+		playtimeRecent := g.GetInt("playtime_2weeks")
+
+		scrobble := bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "steam_id", Value: steamID},
+			{Key: "app_id", Value: appID},
+			{Key: "name", Value: name},
+			{Key: "playtime_total", Value: playtimeTotal},
+			{Key: "playtime_recent", Value: playtimeRecent},
+			{Key: "last_polled", Value: now},
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+		_, err := coll.UpdateOne(ctx,
+			bson.D{{Key: "user_id", Value: userID}, {Key: "app_id", Value: appID}},
+			bson.D{{Key: "$set", Value: scrobble}},
+			options.Update().SetUpsert(true),
+		)
+		cancel()
+		if err != nil {
+			log.Printf("scrobble poller: mongo upsert error for user %s app %d: %v", userID, appID, err)
+		}
+	}
+}
+
+func pollScrobbles() {
+	key := steamAPIKey()
+	if key == "" {
+		log.Println("scrobble poller: STEAM_API_KEY not set, skipping")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cursor, err := mongoClient.Database("Gamium").Collection("steam_links").Find(ctx, bson.D{})
+	if err != nil {
+		log.Println("scrobble poller: failed to fetch steam_links:", err)
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var links []SteamLink
+	if err = cursor.All(ctx, &links); err != nil {
+		log.Println("scrobble poller: failed to decode steam_links:", err)
+		return
+	}
+
+	for _, link := range links {
+		pollUserScrobbles(link.SteamID, link.UserID, key)
+	}
+}
+
+func startScrobblePoller() {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	pollScrobbles()
+	for range ticker.C {
+		pollScrobbles()
+	}
+}
+
+func mongoURI() string {
+	uri := os.Getenv("MONGODB_URI")
+	if uri == "" {
+		log.Fatal("MONGODB_URI environment variable is required")
+	}
+	return uri
+}
 
 func main() {
 	router := routing.New()
@@ -460,8 +561,7 @@ func main() {
 	// MongoDB
 	//
 
-	// Set client options
-	clientOptions := options.Client().ApplyURI("mongodb+srv://admin:CzP41byffHs9CIVd@gamium1-7iud8.mongodb.net/Gamium>?retryWrites=true&w=majority")
+	clientOptions := options.Client().ApplyURI(mongoURI())
 
 	// Connect to MongoDB
 	client, err := mongo.Connect(context.TODO(), clientOptions)
@@ -485,6 +585,7 @@ func main() {
 	// Data
 	//
 	go scrapeSteam(5000)
+	go startScrobblePoller()
 
 	//collection := client.Database("test").Collection("trainers")
 
@@ -527,5 +628,9 @@ func main() {
 
 	go serveWebapp()
 
-	panic(fasthttp.ListenAndServe(":8080", router.HandleRequest))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	panic(fasthttp.ListenAndServe(":"+port, router.HandleRequest))
 }

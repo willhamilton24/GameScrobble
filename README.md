@@ -37,6 +37,6 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 - [ ] Implement user accounts + OAuth linking for Xbox, PSN, and Epic (currently just route placeholders)
 - [ ] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
 - [ ] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
-- [ ] Deploy API (Fly.io/Render) + Mongo Atlas with scheduled scrobble polling
+- [x] Deploy API (Fly.io/Render) + Mongo Atlas with scheduled scrobble polling
 - [ ] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
 - [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention
