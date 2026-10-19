@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: gamescrobble-api
+    env: go
+    plan: free
+    buildCommand: go build -o server .
+    startCommand: ./server
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: STEAM_API_KEY
+        sync: false
