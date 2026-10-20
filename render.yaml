@@ -10,3 +10,13 @@ services:
         sync: false
       - key: STEAM_API_KEY
         sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PREMIUM_PRICE_ID
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: AFFILIATE_PARTNER_TAG
+        sync: false

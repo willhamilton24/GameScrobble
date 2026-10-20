@@ -38,5 +38,5 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 - [ ] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
 - [ ] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
 - [x] Deploy API (Fly.io/Render) + Mongo Atlas with scheduled scrobble polling
-- [ ] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
+- [x] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
 - [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention
