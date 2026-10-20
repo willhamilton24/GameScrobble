@@ -17,6 +17,7 @@ require (
 	github.com/molecule-man/go-brrr v1.3.0 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
+	github.com/stripe/stripe-go/v76 v76.25.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect

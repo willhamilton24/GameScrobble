@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	routing "github.com/qiangxue/fasthttp-routing"
@@ -428,6 +429,172 @@ func linkAccount(c *routing.Context) error {
 }
 
 //
+// Premium Routes
+//
+
+// getDeepStats returns all-time playtime aggregations for a user (premium only).
+// Query param: user_id
+func getDeepStats(c *routing.Context) error {
+	userID := string(c.QueryArgs().Peek("user_id"))
+	if userID == "" {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"user_id is required"}`)
+		return nil
+	}
+
+	ok, err := isPremium(c.RequestCtx, userID)
+	if err != nil || !ok {
+		c.SetStatusCode(402)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"premium subscription required","upgrade_url":"/api/stripe/checkout"}`)
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{{Key: "user_id", Value: userID}}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$app_id"},
+			{Key: "name", Value: bson.D{{Key: "$last", Value: "$name"}}},
+			{Key: "playtime_total", Value: bson.D{{Key: "$max", Value: "$playtime_total"}}},
+			{Key: "playtime_recent", Value: bson.D{{Key: "$last", Value: "$playtime_recent"}}},
+			{Key: "last_polled", Value: bson.D{{Key: "$max", Value: "$last_polled"}}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "playtime_total", Value: -1}}}},
+	}
+
+	cursor, err2 := mongoClient.Database("Gamium").Collection("scrobbles").Aggregate(ctx, pipeline)
+	if err2 != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch stats"}`)
+		return nil
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err2 = cursor.All(ctx, &results); err2 != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to decode stats"}`)
+		return nil
+	}
+	if results == nil {
+		results = []bson.M{}
+	}
+
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]interface{}{"stats": results})
+	c.Write(out)
+	return nil
+}
+
+// exportHistory streams a CSV of all scrobbles for a user (premium only).
+// Query param: user_id
+func exportHistory(c *routing.Context) error {
+	userID := string(c.QueryArgs().Peek("user_id"))
+	if userID == "" {
+		c.SetStatusCode(400)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"user_id is required"}`)
+		return nil
+	}
+
+	ok, err := isPremium(c.RequestCtx, userID)
+	if err != nil || !ok {
+		c.SetStatusCode(402)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"premium subscription required","upgrade_url":"/api/stripe/checkout"}`)
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cursor, err2 := mongoClient.Database("Gamium").Collection("scrobbles").
+		Find(ctx, bson.D{{Key: "user_id", Value: userID}})
+	if err2 != nil {
+		c.SetStatusCode(500)
+		c.WriteString("failed to fetch history")
+		return nil
+	}
+	defer cursor.Close(ctx)
+
+	c.SetContentType("text/csv")
+	c.Response.Header.Set("Content-Disposition", `attachment; filename="gamescrobble_history.csv"`)
+
+	w := csv.NewWriter(c)
+	_ = w.Write([]string{"app_id", "name", "playtime_total_minutes", "playtime_recent_minutes", "last_polled"})
+
+	for cursor.Next(ctx) {
+		var row bson.M
+		if err3 := cursor.Decode(&row); err3 != nil {
+			continue
+		}
+		appID := fmt.Sprintf("%v", row["app_id"])
+		name, _ := row["name"].(string)
+		playtimeTotal := fmt.Sprintf("%v", row["playtime_total"])
+		playtimeRecent := fmt.Sprintf("%v", row["playtime_recent"])
+		lastPolled := ""
+		if t, ok2 := row["last_polled"].(time.Time); ok2 {
+			lastPolled = t.UTC().Format(time.RFC3339)
+		}
+		_ = w.Write([]string{appID, name, playtimeTotal, playtimeRecent, lastPolled})
+	}
+	w.Flush()
+	return nil
+}
+
+// getGameDeals returns stored deal offers for a game, with affiliate-tagged URLs.
+// Route param: title
+func getGameDeals(c *routing.Context) error {
+	title := c.Param("title")
+
+	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	defer cancel()
+
+	var game Game
+	err := mongoClient.Database("Gamium").Collection("games").
+		FindOne(ctx, bson.D{{Key: "title", Value: title}}).Decode(&game)
+	if err != nil {
+		c.SetStatusCode(404)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"game not found"}`)
+		return nil
+	}
+
+	tagOffers := func(offers []Offer) []map[string]interface{} {
+		result := make([]map[string]interface{}, 0, len(offers))
+		for _, o := range offers {
+			result = append(result, map[string]interface{}{
+				"vendor":      o.Vendor,
+				"platform":    o.Platform,
+				"digital":     o.Digital,
+				"url":         o.Url,
+				"deal_url":    tagURL(o.Url, o.Vendor),
+				"internal_id": o.InternalId,
+			})
+		}
+		return result
+	}
+
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]interface{}{
+		"title":             game.Title,
+		"pc_deals":          tagOffers(game.PcOffers),
+		"xbox_deals":        tagOffers(game.XboxOffers),
+		"playstation_deals": tagOffers(game.PlaystationOffers),
+		"switch_deals":      tagOffers(game.SwitchOffers),
+		"find_more_deals":   itadSearchURL(game.Title),
+	})
+	c.Write(out)
+	return nil
+}
+
+//
 // Serve Webapp
 //
 
@@ -620,6 +787,27 @@ func main() {
 
 	router.Get("/s/recent", func(c *routing.Context) error {
 		return getRecentGames(c)
+	})
+
+	// Premium subscription
+	router.Post("/api/stripe/checkout", func(c *routing.Context) error {
+		return createCheckoutSession(c)
+	})
+	router.Post("/api/stripe/webhook", func(c *routing.Context) error {
+		return handleStripeWebhook(c)
+	})
+
+	// Premium-gated endpoints
+	router.Get("/u/stats", func(c *routing.Context) error {
+		return getDeepStats(c)
+	})
+	router.Get("/u/export", func(c *routing.Context) error {
+		return exportHistory(c)
+	})
+
+	// Game deals with affiliate links
+	router.Get("/game/<title>/deals", func(c *routing.Context) error {
+		return getGameDeals(c)
 	})
 
 	//
