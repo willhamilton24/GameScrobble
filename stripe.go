@@ -76,6 +76,11 @@ func createCheckoutSession(c *routing.Context) error {
 		SuccessURL: stripe.String(base + "/premium/success?session_id={CHECKOUT_SESSION_ID}"),
 		CancelURL:  stripe.String(base + "/premium/cancel"),
 		Metadata:   map[string]string{"user_id": req.UserID},
+		// Copy the user onto the subscription so renewal invoices
+		// (invoice.payment_succeeded) can be attributed back to the user.
+		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
+			Metadata: map[string]string{"user_id": req.UserID},
+		},
 	}
 
 	s, err := session.New(params)
@@ -145,6 +150,27 @@ func handleStripeWebhook(c *routing.Context) error {
 			}
 		}
 
+	case "invoice.payment_succeeded":
+		var inv stripe.Invoice
+		if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
+			break
+		}
+		customerID := ""
+		if inv.Customer != nil {
+			customerID = inv.Customer.ID
+		}
+		userID := ""
+		if inv.SubscriptionDetails != nil {
+			userID = inv.SubscriptionDetails.Metadata["user_id"]
+		}
+		if customerID == "" && userID == "" {
+			log.Printf("stripe webhook: invoice %s has no customer or user_id metadata", inv.ID)
+			break
+		}
+		if err := extendPremium(customerID, userID, invoicePeriodEnd(&inv)); err != nil {
+			log.Printf("stripe webhook: extendPremium error for customer %s: %v", customerID, err)
+		}
+
 	case "invoice.payment_failed":
 		log.Printf("stripe webhook: payment failed for event %s", event.ID)
 	}
@@ -154,10 +180,12 @@ func handleStripeWebhook(c *routing.Context) error {
 	return nil
 }
 
-// activatePremium marks a user as premium for one year and stores the Stripe customer ID.
-// The expiry is extended on each successful payment via invoice.payment_succeeded.
+// activatePremium links the user to their Stripe customer and grants a short
+// bridge entitlement. The invoice.payment_succeeded webhook for the first
+// invoice follows immediately and sets premium_until to the real billing
+// period end (see extendPremium).
 func activatePremium(userID, stripeCustomerID string) error {
-	until := time.Now().Add(365 * 24 * time.Hour)
+	until := time.Now().Add(7 * 24 * time.Hour)
 	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
 	defer cancel()
 
@@ -168,6 +196,68 @@ func activatePremium(userID, stripeCustomerID string) error {
 			{Key: "premium_until", Value: until},
 			{Key: "stripe_customer_id", Value: stripeCustomerID},
 		}}},
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+// invoicePeriodEnd returns the latest billing-period end covered by the
+// invoice's line items, falling back to the invoice's own period when no
+// lines are present.
+func invoicePeriodEnd(inv *stripe.Invoice) time.Time {
+	var end int64
+	if inv.Lines != nil {
+		for _, line := range inv.Lines.Data {
+			if line.Period != nil && line.Period.End > end {
+				end = line.Period.End
+			}
+		}
+	}
+	if end == 0 {
+		end = inv.PeriodEnd
+	}
+	return time.Unix(end, 0)
+}
+
+// extendPremium pushes premium_until out to the paid period's end plus a grace
+// window covering renewal-payment delays. $max guarantees a replayed or
+// out-of-order webhook never shortens an existing entitlement.
+func extendPremium(stripeCustomerID, userID string, periodEnd time.Time) error {
+	until := periodEnd.Add(72 * time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	defer cancel()
+
+	col := mongoClient.Database("Gamium").Collection("premium_users")
+
+	if stripeCustomerID != "" {
+		res, err := col.UpdateOne(ctx,
+			bson.D{{Key: "stripe_customer_id", Value: stripeCustomerID}},
+			bson.D{{Key: "$max", Value: bson.D{{Key: "premium_until", Value: until}}}},
+		)
+		if err != nil {
+			return err
+		}
+		if res.MatchedCount > 0 {
+			return nil
+		}
+	}
+
+	// No document for this customer yet — the first invoice can arrive before
+	// checkout.session.completed. Fall back to the user_id carried on the
+	// subscription metadata and upsert, recording the customer ID.
+	if userID == "" {
+		return fmt.Errorf("no premium_users match for customer %q and no user_id metadata", stripeCustomerID)
+	}
+	set := bson.D{{Key: "user_id", Value: userID}}
+	if stripeCustomerID != "" {
+		set = append(set, bson.E{Key: "stripe_customer_id", Value: stripeCustomerID})
+	}
+	_, err := col.UpdateOne(ctx,
+		bson.D{{Key: "user_id", Value: userID}},
+		bson.D{
+			{Key: "$max", Value: bson.D{{Key: "premium_until", Value: until}}},
+			{Key: "$set", Value: set},
+		},
 		options.Update().SetUpsert(true),
 	)
 	return err
