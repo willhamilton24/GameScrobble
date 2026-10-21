@@ -23,6 +23,35 @@ type PremiumUser struct {
 	StripeCustomerID string    `bson:"stripe_customer_id"`
 }
 
+// premiumStore abstracts premium-subscription persistence so tests can inject
+// an in-memory stub without a live MongoDB connection.
+type premiumStore interface {
+	activate(userID, stripeCustomerID string) error
+	extend(stripeCustomerID, userID string, periodEnd time.Time) error
+	deactivateByCustomer(stripeCustomerID string) error
+	checkPremium(ctx context.Context, userID string) (bool, error)
+}
+
+// premiums is the active store; defaults to mongoPremiumStore and is
+// overridden in tests.
+var premiums premiumStore = mongoPremiumStore{}
+
+// mongoPremiumStore delegates to the MongoDB-backed helpers below.
+type mongoPremiumStore struct{}
+
+func (mongoPremiumStore) activate(userID, stripeCustomerID string) error {
+	return activatePremium(userID, stripeCustomerID)
+}
+func (mongoPremiumStore) extend(stripeCustomerID, userID string, periodEnd time.Time) error {
+	return extendPremium(stripeCustomerID, userID, periodEnd)
+}
+func (mongoPremiumStore) deactivateByCustomer(stripeCustomerID string) error {
+	return deactivatePremiumByCustomer(stripeCustomerID)
+}
+func (mongoPremiumStore) checkPremium(ctx context.Context, userID string) (bool, error) {
+	return isPremium(ctx, userID)
+}
+
 func stripeKey() string        { return os.Getenv("STRIPE_SECRET_KEY") }
 func stripeWebhookSecret() string { return os.Getenv("STRIPE_WEBHOOK_SECRET") }
 func premiumPriceID() string   { return os.Getenv("STRIPE_PREMIUM_PRICE_ID") }
@@ -130,7 +159,7 @@ func handleStripeWebhook(c *routing.Context) error {
 			if sess.Customer != nil {
 				customerID = sess.Customer.ID
 			}
-			if err := activatePremium(userID, customerID); err != nil {
+			if err := premiums.activate(userID, customerID); err != nil {
 				log.Printf("stripe webhook: activatePremium error for %s: %v", userID, err)
 			}
 		}
@@ -145,7 +174,7 @@ func handleStripeWebhook(c *routing.Context) error {
 			customerID = sub.Customer.ID
 		}
 		if customerID != "" {
-			if err := deactivatePremiumByCustomer(customerID); err != nil {
+			if err := premiums.deactivateByCustomer(customerID); err != nil {
 				log.Printf("stripe webhook: deactivatePremium error: %v", err)
 			}
 		}
@@ -167,7 +196,7 @@ func handleStripeWebhook(c *routing.Context) error {
 			log.Printf("stripe webhook: invoice %s has no customer or user_id metadata", inv.ID)
 			break
 		}
-		if err := extendPremium(customerID, userID, invoicePeriodEnd(&inv)); err != nil {
+		if err := premiums.extend(customerID, userID, invoicePeriodEnd(&inv)); err != nil {
 			log.Printf("stripe webhook: extendPremium error for customer %s: %v", customerID, err)
 		}
 

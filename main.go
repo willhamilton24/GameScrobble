@@ -464,7 +464,7 @@ func getDeepStats(c *routing.Context) error {
 		return nil
 	}
 
-	ok, err := isPremium(c.RequestCtx, userID)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
 	if err != nil || !ok {
 		c.SetStatusCode(402)
 		c.SetContentType("application/json")
@@ -524,7 +524,7 @@ func exportHistory(c *routing.Context) error {
 		return nil
 	}
 
-	ok, err := isPremium(c.RequestCtx, userID)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
 	if err != nil || !ok {
 		c.SetStatusCode(402)
 		c.SetContentType("application/json")
