@@ -34,7 +34,7 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 
 ### Release TODOs
 - [x] Finish the Steam integration end-to-end using official Web API keys (drop the ChromeDP password-login approach — it is a security and ToS liability)
-- [ ] Implement user accounts + OAuth linking for Xbox, PSN, and Epic (currently just route placeholders)
+- [x] Implement user accounts + OAuth linking for Xbox, PSN, and Epic (currently just route placeholders)
 - [ ] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
 - [x] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
 - [x] Deploy API (Fly.io/Render) + Mongo Atlas with scheduled scrobble polling
