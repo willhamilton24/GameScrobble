@@ -16,6 +16,7 @@ import (
 	routing "github.com/qiangxue/fasthttp-routing"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -31,11 +32,15 @@ type User struct {
 var oauthHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 func jwtSecret() []byte {
-	s := os.Getenv("JWT_SECRET")
-	if s == "" {
-		s = "changeme-set-JWT_SECRET-in-production"
-	}
-	return []byte(s)
+	return []byte(os.Getenv("JWT_SECRET"))
+}
+
+// writeJSONError writes a JSON error response with the message safely encoded.
+func writeJSONError(c *routing.Context, status int, msg string) {
+	c.SetStatusCode(status)
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]string{"error": msg})
+	c.Write(out)
 }
 
 // signToken creates a signed HS256 JWT with a 30-day expiry.
@@ -154,6 +159,7 @@ func registerUser(c *routing.Context) error {
 		c.WriteString(`{"error":"email and password are required"}`)
 		return nil
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if len(req.Password) < 8 {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
@@ -188,6 +194,12 @@ func registerUser(c *routing.Context) error {
 		CreatedAt:    time.Now().UTC(),
 	}
 	if _, err = col.InsertOne(ctx, user); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			c.SetStatusCode(409)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"email already registered"}`)
+			return nil
+		}
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to create user"}`)
@@ -225,6 +237,7 @@ func loginUser(c *routing.Context) error {
 		c.WriteString(`{"error":"email and password are required"}`)
 		return nil
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
 	col := mongoClient.Database("Gamium").Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)

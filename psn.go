@@ -64,9 +64,7 @@ func psnAuth(c *routing.Context) error {
 // GET /p/callback
 func psnCallback(c *routing.Context) error {
 	if errParam := string(c.QueryArgs().Peek("error")); errParam != "" {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"PSN OAuth denied: %s"}`, errParam)
+		writeJSONError(c, 400, "PSN OAuth denied: "+errParam)
 		return nil
 	}
 	code := string(c.QueryArgs().Peek("code"))
@@ -80,25 +78,19 @@ func psnCallback(c *routing.Context) error {
 
 	userID, err := verifyOAuthState(state)
 	if err != nil {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"invalid state: %s"}`, err.Error())
+		writeJSONError(c, 400, "invalid state: "+err.Error())
 		return nil
 	}
 
 	accessToken, err := psnExchangeCode(code)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"PSN token exchange failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "PSN token exchange failed: "+err.Error())
 		return nil
 	}
 
 	onlineID, accountID, err := psnGetProfile(accessToken)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"PSN profile lookup failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "PSN profile lookup failed: "+err.Error())
 		return nil
 	}
 

@@ -60,9 +60,7 @@ func xboxAuth(c *routing.Context) error {
 // GET /x/callback
 func xboxCallback(c *routing.Context) error {
 	if errParam := string(c.QueryArgs().Peek("error")); errParam != "" {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Xbox OAuth denied: %s"}`, errParam)
+		writeJSONError(c, 400, "Xbox OAuth denied: "+errParam)
 		return nil
 	}
 	code := string(c.QueryArgs().Peek("code"))
@@ -76,25 +74,19 @@ func xboxCallback(c *routing.Context) error {
 
 	userID, err := verifyOAuthState(state)
 	if err != nil {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"invalid state: %s"}`, err.Error())
+		writeJSONError(c, 400, "invalid state: "+err.Error())
 		return nil
 	}
 
 	msToken, err := xboxExchangeCode(code)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"token exchange failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "token exchange failed: "+err.Error())
 		return nil
 	}
 
 	gamertag, xuid, err := xboxGetIdentity(msToken)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Xbox identity lookup failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "Xbox identity lookup failed: "+err.Error())
 		return nil
 	}
 

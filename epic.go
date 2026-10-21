@@ -59,9 +59,7 @@ func epicAuth(c *routing.Context) error {
 // GET /e/callback
 func epicCallback(c *routing.Context) error {
 	if errParam := string(c.QueryArgs().Peek("error")); errParam != "" {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Epic OAuth denied: %s"}`, errParam)
+		writeJSONError(c, 400, "Epic OAuth denied: "+errParam)
 		return nil
 	}
 	code := string(c.QueryArgs().Peek("code"))
@@ -75,25 +73,19 @@ func epicCallback(c *routing.Context) error {
 
 	userID, err := verifyOAuthState(state)
 	if err != nil {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"invalid state: %s"}`, err.Error())
+		writeJSONError(c, 400, "invalid state: "+err.Error())
 		return nil
 	}
 
 	accessToken, err := epicExchangeCode(code)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Epic token exchange failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "Epic token exchange failed: "+err.Error())
 		return nil
 	}
 
 	epicID, displayName, err := epicGetUserInfo(accessToken)
 	if err != nil {
-		c.SetStatusCode(502)
-		c.SetContentType("application/json")
-		fmt.Fprintf(c, `{"error":"Epic user info lookup failed: %s"}`, err.Error())
+		writeJSONError(c, 502, "Epic user info lookup failed: "+err.Error())
 		return nil
 	}
 

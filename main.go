@@ -950,6 +950,10 @@ func mongoURI() string {
 }
 
 func main() {
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("JWT_SECRET must be set")
+	}
+
 	router := routing.New()
 
 	//
@@ -975,6 +979,18 @@ func main() {
 	fmt.Println("Connected to MongoDB!")
 
 	mongoClient = client
+
+	// Enforce email uniqueness at the database level so concurrent
+	// registrations cannot create duplicate accounts.
+	idxCtx, idxCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	_, err = client.Database("Gamium").Collection("users").Indexes().CreateOne(idxCtx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "email", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+	idxCancel()
+	if err != nil {
+		log.Fatal("failed to create unique index on users.email: ", err)
+	}
 
 	//
 	// Data
