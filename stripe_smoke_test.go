@@ -1,13 +1,12 @@
 package main
 
-// E2E smoke test for the Stripe premium flow, fully in-process:
+// In-process webhook and premium gating coverage:
 //   non-premium gate → checkout.session.completed webhook → premium active
 //   → export unblocked → invoice.payment_succeeded extends premium
 //   → subscription cancelled → premium revoked → export gated again
 //
-// No live Stripe API, no real database. The in-memory premiumStore is swapped
-// in for the duration of the test; mongoClient is initialised to a stub that
-// fails quickly so exportHistory doesn't panic after the gate passes.
+// No signup, checkout creation, or Stripe delivery is exercised. Premium state
+// and export data are injected in memory; no external services are contacted.
 
 import (
 	"context"
@@ -21,8 +20,8 @@ import (
 
 	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // ---------------------------------------------------------------------------
@@ -200,7 +199,7 @@ func subscriptionDeletedEvent(customerID string) []byte {
 // Smoke test
 // ---------------------------------------------------------------------------
 
-// TestStripeSmoke exercises the full premium flow without external services.
+// TestStripeSmoke exercises webhook handling and export gating in-process.
 func TestStripeSmoke(t *testing.T) {
 	store := newMemPremiumStore()
 	oldPremiums := premiums
@@ -209,23 +208,18 @@ func TestStripeSmoke(t *testing.T) {
 
 	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
 
-	// Provide a non-nil mongoClient so exportHistory doesn't panic when the
-	// scrobble query runs after the premium gate. The stub client points at a
-	// non-existent server and fails in ~25 ms rather than hanging.
-	oldMC := mongoClient
-	if mongoClient == nil {
-		opts := options.Client().
-			ApplyURI("mongodb://localhost:27017/").
-			SetServerSelectionTimeout(25 * time.Millisecond)
-		c, err := mongo.Connect(context.Background(), opts)
-		if err == nil {
-			mongoClient = c
-			t.Cleanup(func() {
-				c.Disconnect(context.Background()) //nolint
-				mongoClient = oldMC
-			})
+	oldFindExportHistory := findExportHistory
+	findExportHistory = func(_ context.Context, userID string) (*mongo.Cursor, error) {
+		if userID != smokeUserID {
+			t.Fatalf("unexpected export user: %q", userID)
 		}
+		// No polling timestamp has been recorded for this fixture.
+		return mongo.NewCursorFromDocuments([]interface{}{
+			bson.M{"app_id": 440, "name": "Team Fortress 2", "playtime_total": 120, "playtime_recent": 30},
+			bson.M{"app_id": 570, "name": "Game, with comma", "playtime_total": 90, "playtime_recent": 15},
+		}, nil, nil)
 	}
+	t.Cleanup(func() { findExportHistory = oldFindExportHistory })
 
 	// 1. Export is gated — non-premium user receives 402.
 	t.Run("export_gated_before_checkout", func(t *testing.T) {
@@ -256,26 +250,44 @@ func TestStripeSmoke(t *testing.T) {
 
 	// 4. invoice.payment_succeeded extends the premium period.
 	t.Run("invoice_payment_extends_premium", func(t *testing.T) {
-		futureEnd := time.Now().Add(30 * 24 * time.Hour)
+		store.mu.Lock()
+		previousUntil := store.records[smokeUserID]
+		store.mu.Unlock()
+		futureEnd := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second)
 		payload := invoicePaymentSucceededEvent(smokeCustomerID, smokeUserID, futureEnd)
 		sig := signStripePayload(payload, smokeWebhookSecret, time.Now())
 		ctx := doWebhookReq(payload, sig)
 		if ctx.Response.StatusCode() != 200 {
 			t.Fatalf("invoice webhook returned %d: %s", ctx.Response.StatusCode(), ctx.Response.Body())
 		}
-		ok, err := store.checkPremium(context.Background(), smokeUserID)
-		if err != nil || !ok {
-			t.Fatalf("expected premium active after invoice: ok=%v err=%v", ok, err)
+		store.mu.Lock()
+		gotUntil := store.records[smokeUserID]
+		store.mu.Unlock()
+		wantUntil := futureEnd.Add(72 * time.Hour)
+		if !gotUntil.Equal(wantUntil) || !gotUntil.After(previousUntil) {
+			t.Fatalf("expected expiration to advance from %s to %s, got %s",
+				previousUntil, wantUntil, gotUntil)
 		}
 	})
 
-	// 5. Export is no longer gated — premium user passes the 402 check.
-	//    The handler will return 500 because the stub mongoClient has no
-	//    scrobble data, but it must not return 402.
+	// 5. Premium users receive a successful CSV export.
 	t.Run("export_unblocked_after_premium", func(t *testing.T) {
 		ctx := doExportReq(smokeUserID)
-		if ctx.Response.StatusCode() == 402 {
-			t.Fatal("premium user must not receive 402 on export")
+		if ctx.Response.StatusCode() != 200 {
+			t.Fatalf("expected CSV export status 200, got %d: %s",
+				ctx.Response.StatusCode(), ctx.Response.Body())
+		}
+		if got := string(ctx.Response.Header.ContentType()); got != "text/csv" {
+			t.Fatalf("unexpected Content-Type: %q", got)
+		}
+		if got := string(ctx.Response.Header.Peek("Content-Disposition")); got != `attachment; filename="gamescrobble_history.csv"` {
+			t.Fatalf("unexpected Content-Disposition: %q", got)
+		}
+		wantCSV := "app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n" +
+			"440,Team Fortress 2,120,30,\n" +
+			"570,\"Game, with comma\",90,15,\n"
+		if got := string(ctx.Response.Body()); got != wantCSV {
+			t.Fatalf("unexpected CSV contents: got %q, want %q", got, wantCSV)
 		}
 	})
 

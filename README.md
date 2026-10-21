@@ -40,7 +40,9 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 - [x] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
 - [ ] Migrate persistence from MongoDB to Neon Postgres via `DATABASE_URL` (shared platform; `MONGODB_URI` is not provisioned, so nothing works in the deployed environment until this ships) — update render.yaml accordingly
 - [ ] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
-- [x] Run a Stripe test-mode E2E smoke test: signup → checkout → webhook fires → premium unlock → CSV export gated correctly (shared Stripe product/price/webhook already provisioned)
+- [ ] Run a Stripe test-mode E2E smoke test: signup → checkout → webhook fires → premium unlock → CSV export gated correctly (shared Stripe product/price/webhook already provisioned). Actual Stripe E2E verification remains pending; public endpoint verification waits on the operator enabling the deployment switch.
 - [ ] Set platform credentials: `STEAM_API_KEY`, plus Xbox (`XBOX_CLIENT_ID`/`SECRET`), PSN, and Epic OAuth app registrations (operator sign-ups; Steam linking alone is enough to launch)
 - [ ] Verify the Render deploy end-to-end and point the Stripe webhook at the live URL (waits on the deployment switch)
 - [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention (waits on the deployment switch)
+
+The local `TestStripeSmoke` test provides in-process webhook/gating coverage using signed synthetic events, in-memory premium state, and deterministic export data. It verifies premium activation, invoice expiration extension, successful CSV export, and 402 gating before activation and after cancellation. It does not exercise signup, checkout creation, or delivery by Stripe.
