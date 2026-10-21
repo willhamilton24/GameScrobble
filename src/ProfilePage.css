@@ -1,0 +1,291 @@
+.profile-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 5rem;
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+
+.profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid #1e2035;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.profile-id {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  letter-spacing: -0.01em;
+}
+
+.year-badge {
+  background: #00d4ff18;
+  color: #00d4ff;
+  border: 1px solid #00d4ff30;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.share-btn {
+  background: transparent;
+  border: 1px solid #2a2a45;
+  color: #64748b;
+  padding: 0.4rem 1rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.share-btn:hover {
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+/* ── Stats bar ───────────────────────────────────────────── */
+
+.stats-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 0.75rem;
+  margin-bottom: 2.5rem;
+}
+
+@media (max-width: 600px) {
+  .stats-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+  .stat-card--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.stat-card {
+  background: #12121f;
+  border: 1px solid #1e2035;
+  border-radius: 0.75rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+  margin-bottom: 0.3rem;
+  letter-spacing: -0.03em;
+}
+
+.stat-value--sm {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Sections ────────────────────────────────────────────── */
+
+.section {
+  margin-bottom: 2.5rem;
+}
+
+.section-header {
+  margin-bottom: 0.875rem;
+}
+
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+}
+
+/* ── Heatmap ─────────────────────────────────────────────── */
+
+.heatmap-card {
+  background: #12121f;
+  border: 1px solid #1e2035;
+  border-radius: 0.75rem;
+  padding: 1.25rem 1.5rem 1rem;
+  overflow-x: auto;
+}
+
+.heatmap-wrap {
+  display: inline-block;
+  min-width: 100%;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+  font-size: 0.7rem;
+  color: #475569;
+}
+
+.heatmap-legend span {
+  margin: 0 0.15rem;
+}
+
+.legend-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Games grid ──────────────────────────────────────────── */
+
+.games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.75rem;
+}
+
+.game-card {
+  background: #12121f;
+  border: 1px solid #1e2035;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.game-card:hover {
+  border-color: #2a2a45;
+}
+
+.game-cover {
+  width: 100%;
+  height: 88px;
+  object-fit: cover;
+  display: block;
+  background: #0d0d1a;
+}
+
+.game-info {
+  padding: 0.75rem 0.875rem;
+}
+
+.game-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-time {
+  font-size: 0.8rem;
+  color: #00d4ff;
+  font-weight: 600;
+}
+
+/* ── Empty / loading states ──────────────────────────────── */
+
+.profile-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  color: #475569;
+  font-size: 1rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.profile-state h2 {
+  color: #94a3b8;
+  margin-bottom: 0.5rem;
+}
+
+.profile-state p {
+  margin: 0.25rem 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.empty-state p {
+  margin: 0.25rem 0;
+}
+
+/* ── Footer / CTA ────────────────────────────────────────── */
+
+.profile-footer {
+  border-top: 1px solid #1e2035;
+  padding-top: 2.5rem;
+  text-align: center;
+}
+
+.cta-block {
+  margin-bottom: 1.5rem;
+}
+
+.cta-copy {
+  color: #64748b;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.cta-btn {
+  display: inline-block;
+  background: #00d4ff;
+  color: #0d0d1a;
+  font-weight: 700;
+  font-size: 0.875rem;
+  padding: 0.65rem 1.75rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  transition: opacity 0.15s;
+  letter-spacing: 0.01em;
+}
+
+.cta-btn:hover {
+  opacity: 0.88;
+}
+
+.footer-brand {
+  font-size: 0.75rem;
+  color: #2a2a45;
+  margin-top: 0.5rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
