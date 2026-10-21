@@ -661,7 +661,6 @@ func getPublicProfile(c *routing.Context) error {
 	}
 
 	topGames := make([]PublicGame, 0, len(rawGames))
-	totalMinutes := 0
 	for _, g := range rawGames {
 		pg := PublicGame{Name: fmt.Sprintf("%v", g["name"])}
 		switch v := g["_id"].(type) {
@@ -680,8 +679,60 @@ func getPublicProfile(c *routing.Context) error {
 		case int:
 			pg.Minutes = v
 		}
-		totalMinutes += pg.Minutes
 		topGames = append(topGames, pg)
+	}
+
+	// Totals across all games this year (not just the top 10).
+	totalsPipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "date", Value: bson.D{{Key: "$gte", Value: startOfYear}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$app_id"},
+			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total_minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+			{Key: "total_games", Value: bson.D{{Key: "$sum", Value: 1}}},
+		}}},
+	}
+	totalsCursor, err := actColl.Aggregate(ctx, totalsPipeline)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch totals"}`)
+		return nil
+	}
+	defer totalsCursor.Close(ctx)
+	var rawTotals []bson.M
+	if err = totalsCursor.All(ctx, &rawTotals); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to decode totals"}`)
+		return nil
+	}
+
+	totalMinutes := 0
+	totalGames := 0
+	if len(rawTotals) > 0 {
+		switch v := rawTotals[0]["total_minutes"].(type) {
+		case int32:
+			totalMinutes = int(v)
+		case int64:
+			totalMinutes = int(v)
+		case int:
+			totalMinutes = v
+		}
+		switch v := rawTotals[0]["total_games"].(type) {
+		case int32:
+			totalGames = int(v)
+		case int64:
+			totalGames = int(v)
+		case int:
+			totalGames = v
+		}
 	}
 
 	// Daily activity totals for the past 52 weeks (heatmap).
@@ -732,7 +783,7 @@ func getPublicProfile(c *routing.Context) error {
 		"user_id":       userID,
 		"year":          year,
 		"total_minutes": totalMinutes,
-		"total_games":   len(topGames),
+		"total_games":   totalGames,
 		"top_games":     topGames,
 		"heatmap":       heatmap,
 	})
@@ -938,7 +989,7 @@ func main() {
 	// API
 	//
 
-	router.Get("/", func(c *routing.Context) error {
+	router.Get("/api", func(c *routing.Context) error {
 		fmt.Fprintf(c, "Gamium API v1.0.0")
 		return nil
 	})
@@ -998,12 +1049,9 @@ func main() {
 		port = "8080"
 	}
 	// API routes take precedence; unmatched paths fall through to the React SPA.
-	mainHandler := func(ctx *fasthttp.RequestCtx) {
-		router.HandleRequest(ctx)
-		if ctx.Response.StatusCode() == 404 {
-			ctx.Response.Reset()
-			serveFrontend(ctx)
-		}
-	}
-	panic(fasthttp.ListenAndServe(":"+port, mainHandler))
+	router.NotFound(func(c *routing.Context) error {
+		serveFrontend(c.RequestCtx)
+		return nil
+	})
+	panic(fasthttp.ListenAndServe(":"+port, router.HandleRequest))
 }
