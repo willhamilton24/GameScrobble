@@ -3,7 +3,7 @@ services:
     name: gamescrobble-api
     runtime: go
     plan: free
-    buildCommand: go build -o server .
+    buildCommand: npm install && npm run build && go build -o server .
     startCommand: ./server
     envVars:
       - key: MONGODB_URI

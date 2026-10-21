@@ -88,6 +88,28 @@ type SteamLink struct {
 	OwnershipVerified bool   `bson:"ownership_verified" json:"ownership_verified"`
 }
 
+// PlayActivity records a daily playtime delta used to build the public profile heatmap.
+type PlayActivity struct {
+	UserID  string `bson:"user_id"`
+	AppID   int    `bson:"app_id"`
+	Name    string `bson:"name"`
+	Date    string `bson:"date"` // YYYY-MM-DD
+	Minutes int    `bson:"minutes"`
+}
+
+// PublicGame is one entry in the public profile year-in-games list.
+type PublicGame struct {
+	AppID   int    `json:"app_id"`
+	Name    string `json:"name"`
+	Minutes int    `json:"minutes"`
+}
+
+// HeatmapDay is one data point in the public profile activity heatmap.
+type HeatmapDay struct {
+	Date    string `json:"date"`
+	Minutes int    `json:"minutes"`
+}
+
 //
 // Steam Pricing
 //
@@ -594,27 +616,194 @@ func getGameDeals(c *routing.Context) error {
 	return nil
 }
 
-//
-// Serve Webapp
-//
+// getPublicProfile returns a user's year-in-games summary and activity heatmap.
+// Route param: user_id. No authentication required — the profile is public.
+func getPublicProfile(c *routing.Context) error {
+	userID := c.Param("user_id")
+	now := time.Now().UTC()
+	year := now.Year()
+	startOfYear := fmt.Sprintf("%d-01-01", year)
+	yearAgo := now.AddDate(-1, 0, 0).Format("2006-01-02")
 
-func serveWebapp() {
-	fs := &fasthttp.FS{
-		// Path to directory to serve.
-		Root: "index.html",
-		// Generate index pages if client requests directory contents.
-		GenerateIndexPages: true,
-		// Enable transparent compression to save network traffic.
-		Compress: true,
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	actColl := mongoClient.Database("Gamium").Collection("play_activity")
+
+	// Top games this calendar year, ranked by total minutes.
+	topPipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "date", Value: bson.D{{Key: "$gte", Value: startOfYear}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$app_id"},
+			{Key: "name", Value: bson.D{{Key: "$last", Value: "$name"}}},
+			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "minutes", Value: -1}}}},
+		{{Key: "$limit", Value: 10}},
+	}
+	cursor, err := actColl.Aggregate(ctx, topPipeline)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch games"}`)
+		return nil
+	}
+	defer cursor.Close(ctx)
+	var rawGames []bson.M
+	if err = cursor.All(ctx, &rawGames); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to decode games"}`)
+		return nil
 	}
 
-	// Create request handler for serving static files.
-	h := fs.NewRequestHandler()
-
-	// Start the server.
-	if err := fasthttp.ListenAndServe(":3000", h); err != nil {
-		fmt.Println("error in ListenAndServe:", err)
+	topGames := make([]PublicGame, 0, len(rawGames))
+	for _, g := range rawGames {
+		pg := PublicGame{Name: fmt.Sprintf("%v", g["name"])}
+		switch v := g["_id"].(type) {
+		case int32:
+			pg.AppID = int(v)
+		case int64:
+			pg.AppID = int(v)
+		case int:
+			pg.AppID = v
+		}
+		switch v := g["minutes"].(type) {
+		case int32:
+			pg.Minutes = int(v)
+		case int64:
+			pg.Minutes = int(v)
+		case int:
+			pg.Minutes = v
+		}
+		topGames = append(topGames, pg)
 	}
+
+	// Totals across all games this year (not just the top 10).
+	totalsPipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "date", Value: bson.D{{Key: "$gte", Value: startOfYear}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$app_id"},
+			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total_minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+			{Key: "total_games", Value: bson.D{{Key: "$sum", Value: 1}}},
+		}}},
+	}
+	totalsCursor, err := actColl.Aggregate(ctx, totalsPipeline)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch totals"}`)
+		return nil
+	}
+	defer totalsCursor.Close(ctx)
+	var rawTotals []bson.M
+	if err = totalsCursor.All(ctx, &rawTotals); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to decode totals"}`)
+		return nil
+	}
+
+	totalMinutes := 0
+	totalGames := 0
+	if len(rawTotals) > 0 {
+		switch v := rawTotals[0]["total_minutes"].(type) {
+		case int32:
+			totalMinutes = int(v)
+		case int64:
+			totalMinutes = int(v)
+		case int:
+			totalMinutes = v
+		}
+		switch v := rawTotals[0]["total_games"].(type) {
+		case int32:
+			totalGames = int(v)
+		case int64:
+			totalGames = int(v)
+		case int:
+			totalGames = v
+		}
+	}
+
+	// Daily activity totals for the past 52 weeks (heatmap).
+	heatPipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "date", Value: bson.D{{Key: "$gte", Value: yearAgo}}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$date"},
+			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+	}
+	cursor2, err2 := actColl.Aggregate(ctx, heatPipeline)
+	if err2 != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch heatmap"}`)
+		return nil
+	}
+	defer cursor2.Close(ctx)
+	var rawHeat []bson.M
+	if err2 = cursor2.All(ctx, &rawHeat); err2 != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to decode heatmap"}`)
+		return nil
+	}
+
+	heatmap := make([]HeatmapDay, 0, len(rawHeat))
+	for _, h := range rawHeat {
+		hd := HeatmapDay{Date: fmt.Sprintf("%v", h["_id"])}
+		switch v := h["minutes"].(type) {
+		case int32:
+			hd.Minutes = int(v)
+		case int64:
+			hd.Minutes = int(v)
+		case int:
+			hd.Minutes = v
+		}
+		heatmap = append(heatmap, hd)
+	}
+
+	c.SetContentType("application/json")
+	c.Response.Header.Set("Access-Control-Allow-Origin", "*")
+	out, _ := json.Marshal(map[string]interface{}{
+		"user_id":       userID,
+		"year":          year,
+		"total_minutes": totalMinutes,
+		"total_games":   totalGames,
+		"top_games":     topGames,
+		"heatmap":       heatmap,
+	})
+	c.Write(out)
+	return nil
+}
+
+// serveFrontend serves the built React app, falling back to index.html for SPA routing.
+func serveFrontend(ctx *fasthttp.RequestCtx) {
+	filePath := "build" + string(ctx.Path())
+	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+		fasthttp.ServeFile(ctx, filePath)
+		return
+	}
+	if _, err := os.Stat("build/index.html"); os.IsNotExist(err) {
+		ctx.SetStatusCode(503)
+		ctx.SetBodyString("Frontend not built. Run: npm run build")
+		return
+	}
+	fasthttp.ServeFile(ctx, "build/index.html")
 }
 
 //
@@ -652,6 +841,46 @@ func pollUserScrobbles(steamID, userID, key string) {
 		name := string(g.GetStringBytes("name"))
 		playtimeTotal := g.GetInt("playtime_forever")
 		playtimeRecent := g.GetInt("playtime_2weeks")
+
+		// Record daily playtime delta for the public-profile heatmap.
+		findCtx, findCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+		var existing bson.M
+		findErr := coll.FindOne(findCtx, bson.D{
+			{Key: "user_id", Value: userID},
+			{Key: "app_id", Value: appID},
+		}).Decode(&existing)
+		findCancel()
+		if findErr == nil {
+			oldPT := 0
+			switch v := existing["playtime_total"].(type) {
+			case int32:
+				oldPT = int(v)
+			case int64:
+				oldPT = int(v)
+			case int:
+				oldPT = v
+			}
+			if delta := playtimeTotal - oldPT; delta > 0 {
+				actColl := mongoClient.Database("Gamium").Collection("play_activity")
+				actCtx, actCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+				_, actErr := actColl.UpdateOne(actCtx,
+					bson.D{
+						{Key: "user_id", Value: userID},
+						{Key: "app_id", Value: appID},
+						{Key: "date", Value: now.Format("2006-01-02")},
+					},
+					bson.D{
+						{Key: "$inc", Value: bson.D{{Key: "minutes", Value: delta}}},
+						{Key: "$set", Value: bson.D{{Key: "name", Value: name}}},
+					},
+					options.Update().SetUpsert(true),
+				)
+				actCancel()
+				if actErr != nil {
+					log.Printf("scrobble poller: activity upsert error for user %s app %d: %v", userID, appID, actErr)
+				}
+			}
+		}
 
 		scrobble := bson.D{
 			{Key: "user_id", Value: userID},
@@ -760,7 +989,7 @@ func main() {
 	// API
 	//
 
-	router.Get("/", func(c *routing.Context) error {
+	router.Get("/api", func(c *routing.Context) error {
 		fmt.Fprintf(c, "Gamium API v1.0.0")
 		return nil
 	})
@@ -810,15 +1039,19 @@ func main() {
 		return getGameDeals(c)
 	})
 
-	//
-	// Webapp
-	//
-
-	go serveWebapp()
+	// Public profile: year-in-games + activity heatmap
+	router.Get("/u/<user_id>/profile", func(c *routing.Context) error {
+		return getPublicProfile(c)
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+	// API routes take precedence; unmatched paths fall through to the React SPA.
+	router.NotFound(func(c *routing.Context) error {
+		serveFrontend(c.RequestCtx)
+		return nil
+	})
 	panic(fasthttp.ListenAndServe(":"+port, router.HandleRequest))
 }
