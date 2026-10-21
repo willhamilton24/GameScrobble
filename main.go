@@ -26,8 +26,7 @@ const mongoUpdateTimeout = 5 * time.Second
 
 var steamHTTPGet = fasthttp.GetTimeout
 
-// Only trusted authentication middleware may set this context key. No current
-// route sets it, so linking remains disabled until authentication is implemented.
+// Only authMiddleware (auth.go) may set this context key.
 type authenticatedUserIDKey struct{}
 
 type steamLinkUpdater interface {
@@ -1006,7 +1005,20 @@ func main() {
 		return nil
 	})
 
+	// User accounts
+	router.Post("/auth/register", func(c *routing.Context) error { return registerUser(c) })
+	router.Post("/auth/login", func(c *routing.Context) error { return loginUser(c) })
+	router.Get("/auth/me", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
+		return getMe(c)
+	})
+
 	router.Post("/s/link", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
 		return linkAccount(c)
 	})
 
@@ -1033,6 +1045,33 @@ func main() {
 	router.Get("/u/export", func(c *routing.Context) error {
 		return exportHistory(c)
 	})
+
+	// Xbox Live OAuth linking
+	router.Get("/x/auth", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
+		return xboxAuth(c)
+	})
+	router.Get("/x/callback", func(c *routing.Context) error { return xboxCallback(c) })
+
+	// PlayStation Network OAuth linking
+	router.Get("/p/auth", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
+		return psnAuth(c)
+	})
+	router.Get("/p/callback", func(c *routing.Context) error { return psnCallback(c) })
+
+	// Epic Games OAuth linking
+	router.Get("/e/auth", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
+		return epicAuth(c)
+	})
+	router.Get("/e/callback", func(c *routing.Context) error { return epicCallback(c) })
 
 	// Game deals with affiliate links
 	router.Get("/game/<title>/deals", func(c *routing.Context) error {
