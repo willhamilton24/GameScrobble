@@ -8,6 +8,8 @@ services:
     envVars:
       - key: MONGODB_URI
         sync: false
+      - key: JWT_SECRET
+        sync: false
       - key: STEAM_API_KEY
         sync: false
       - key: STRIPE_SECRET_KEY
