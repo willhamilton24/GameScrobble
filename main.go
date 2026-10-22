@@ -464,7 +464,7 @@ func getDeepStats(c *routing.Context) error {
 		return nil
 	}
 
-	ok, err := isPremium(c.RequestCtx, userID)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
 	if err != nil || !ok {
 		c.SetStatusCode(402)
 		c.SetContentType("application/json")
@@ -513,6 +513,12 @@ func getDeepStats(c *routing.Context) error {
 	return nil
 }
 
+// findExportHistory can be replaced with an in-memory cursor in handler tests.
+var findExportHistory = func(ctx context.Context, userID string) (*mongo.Cursor, error) {
+	return mongoClient.Database("Gamium").Collection("scrobbles").
+		Find(ctx, bson.D{{Key: "user_id", Value: userID}})
+}
+
 // exportHistory streams a CSV of all scrobbles for a user (premium only).
 // Query param: user_id
 func exportHistory(c *routing.Context) error {
@@ -524,7 +530,7 @@ func exportHistory(c *routing.Context) error {
 		return nil
 	}
 
-	ok, err := isPremium(c.RequestCtx, userID)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
 	if err != nil || !ok {
 		c.SetStatusCode(402)
 		c.SetContentType("application/json")
@@ -535,8 +541,7 @@ func exportHistory(c *routing.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cursor, err2 := mongoClient.Database("Gamium").Collection("scrobbles").
-		Find(ctx, bson.D{{Key: "user_id", Value: userID}})
+	cursor, err2 := findExportHistory(ctx, userID)
 	if err2 != nil {
 		c.SetStatusCode(500)
 		c.WriteString("failed to fetch history")
