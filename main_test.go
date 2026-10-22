@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +9,6 @@ import (
 
 	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func linkRequest(t *testing.T, userID, body string) *fasthttp.RequestCtx {
@@ -57,7 +54,6 @@ func TestLinkAccountUpstreamFailures(t *testing.T) {
 	t.Setenv("STEAM_API_KEY", "test-placeholder")
 	old := steamHTTPGet
 	t.Cleanup(func() { steamHTTPGet = old })
-	// A nil Mongo client makes any accidental database access fail this test.
 	for _, tc := range []struct {
 		name, body string
 		err        error
@@ -89,34 +85,5 @@ func TestSteamHTTPTimeout(t *testing.T) {
 	_, _, err := steamHTTPGet(nil, server.URL, 10*time.Millisecond)
 	if !errors.Is(err, fasthttp.ErrTimeout) {
 		t.Fatalf("expected timeout, got %v", err)
-	}
-}
-
-type deadlineUpdater struct {
-	t    *testing.T
-	wait bool
-}
-
-func (u deadlineUpdater) UpdateOne(ctx context.Context, _ interface{}, _ interface{}, _ ...*options.UpdateOptions) (*mongo.UpdateResult, error) {
-	deadline, ok := ctx.Deadline()
-	if !ok || time.Until(deadline) > mongoUpdateTimeout {
-		u.t.Fatal("Mongo update has no bounded deadline")
-	}
-	if u.wait {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	return &mongo.UpdateResult{}, nil
-}
-
-func TestMongoUpdateTimeout(t *testing.T) {
-	if err := saveSteamLink(context.Background(), deadlineUpdater{t: t}, SteamLink{}); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	err := saveSteamLink(ctx, deadlineUpdater{t: t, wait: true}, SteamLink{})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
 }

@@ -6,7 +6,7 @@ services:
     buildCommand: npm install && npm run build && go build -o server .
     startCommand: ./server
     envVars:
-      - key: MONGODB_URI
+      - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
         sync: false
