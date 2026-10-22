@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
-	"github.com/jackc/pgx/v5"
 )
 
 const steamRequestTimeout = 5 * time.Second
@@ -35,16 +35,16 @@ type Offer struct {
 }
 
 type Game struct {
-	Title             string  `json:"title"`
-	Img               string  `json:"img"`
-	Dev               string  `json:"dev"`
-	Pub               string  `json:"pub"`
-	RDate             string  `json:"rdate"`
-	Metacritic        string  `json:"metacritic"`
-	PcOffers          []Offer `json:"pc_offers"`
-	XboxOffers        []Offer `json:"xbox_offers"`
-	PlaystationOffers []Offer `json:"playstation_offers"`
-	SwitchOffers      []Offer `json:"switch_offers"`
+	Title             string   `json:"title"`
+	Img               string   `json:"img"`
+	Dev               string   `json:"dev"`
+	Pub               string   `json:"pub"`
+	RDate             string   `json:"rdate"`
+	Metacritic        string   `json:"metacritic"`
+	PcOffers          []Offer  `json:"pc_offers"`
+	XboxOffers        []Offer  `json:"xbox_offers"`
+	PlaystationOffers []Offer  `json:"playstation_offers"`
+	SwitchOffers      []Offer  `json:"switch_offers"`
 	Platforms         []string `json:"platforms"`
 }
 
@@ -482,9 +482,18 @@ func getDeepStats(c *routing.Context) error {
 	for rows.Next() {
 		var s ScrobbleStat
 		if err := rows.Scan(&s.AppID, &s.Name, &s.PlaytimeTotal, &s.PlaytimeRecent, &s.LastPolled); err != nil {
-			continue
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch stats"}`)
+			return nil
 		}
 		stats = append(stats, s)
+	}
+	if err := rows.Err(); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch stats"}`)
+		return nil
 	}
 
 	c.SetContentType("application/json")
@@ -517,9 +526,12 @@ var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, e
 	for rows.Next() {
 		var r exportRow
 		if err := rows.Scan(&r.AppID, &r.Name, &r.PlaytimeTotal, &r.PlaytimeRecent, &r.LastPolled); err != nil {
-			continue
+			return nil, err
 		}
 		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -670,19 +682,34 @@ func getPublicProfile(c *routing.Context) error {
 	for topRows.Next() {
 		var pg PublicGame
 		if err := topRows.Scan(&pg.AppID, &pg.Name, &pg.Minutes); err != nil {
-			continue
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch games"}`)
+			return nil
 		}
 		topGames = append(topGames, pg)
 	}
+	if err := topRows.Err(); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch games"}`)
+		return nil
+	}
+
 	topRows.Close()
 
 	// Totals across all games this year.
 	var totalMinutes, totalGames int
-	db.QueryRow(ctx, `
+	if err := db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(minutes), 0), COUNT(DISTINCT app_id)
 		FROM play_activity
 		WHERE user_id = $1 AND date >= $2
-	`, userID, startOfYear).Scan(&totalMinutes, &totalGames)
+	`, userID, startOfYear).Scan(&totalMinutes, &totalGames); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch totals"}`)
+		return nil
+	}
 
 	// Daily activity totals for the past 52 weeks (heatmap).
 	heatRows, err := db.Query(ctx, `
@@ -704,9 +731,18 @@ func getPublicProfile(c *routing.Context) error {
 	for heatRows.Next() {
 		var hd HeatmapDay
 		if err := heatRows.Scan(&hd.Date, &hd.Minutes); err != nil {
-			continue
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch heatmap"}`)
+			return nil
 		}
 		heatmap = append(heatmap, hd)
+	}
+	if err := heatRows.Err(); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch heatmap"}`)
+		return nil
 	}
 
 	c.SetContentType("application/json")
@@ -836,9 +872,14 @@ func pollScrobbles() {
 	for rows.Next() {
 		var l SteamLink
 		if err := rows.Scan(&l.UserID, &l.SteamID); err != nil {
-			continue
+			log.Println("scrobble poller: failed to scan steam_links:", err)
+			return
 		}
 		links = append(links, l)
+	}
+	if err := rows.Err(); err != nil {
+		log.Println("scrobble poller: failed to iterate steam_links:", err)
+		return
 	}
 	rows.Close()
 
