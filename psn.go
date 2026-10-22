@@ -12,16 +12,14 @@ import (
 	"time"
 
 	routing "github.com/qiangxue/fasthttp-routing"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // PSNLink records a PlayStation Network account association.
 type PSNLink struct {
-	UserID    string    `bson:"user_id" json:"user_id"`
-	AccountID string    `bson:"account_id" json:"account_id"`
-	OnlineID  string    `bson:"online_id" json:"online_id"`
-	LinkedAt  time.Time `bson:"linked_at" json:"linked_at"`
+	UserID    string    `json:"user_id"`
+	AccountID string    `json:"account_id"`
+	OnlineID  string    `json:"online_id"`
+	LinkedAt  time.Time `json:"linked_at"`
 }
 
 func psnClientID() string     { return os.Getenv("PSN_CLIENT_ID") }
@@ -94,14 +92,17 @@ func psnCallback(c *routing.Context) error {
 		return nil
 	}
 
-	link := PSNLink{UserID: userID, AccountID: accountID, OnlineID: onlineID, LinkedAt: time.Now().UTC()}
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	if _, err = mongoClient.Database("Gamium").Collection("psn_links").UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		bson.D{{Key: "$set", Value: link}},
-		options.Update().SetUpsert(true),
-	); err != nil {
+	_, err = db.Exec(ctx, `
+		INSERT INTO psn_links (user_id, account_id, online_id, linked_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id) DO UPDATE SET
+			account_id = $2,
+			online_id  = $3,
+			linked_at  = $4
+	`, userID, accountID, onlineID, time.Now().UTC())
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to save PSN link"}`)

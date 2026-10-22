@@ -3,28 +3,28 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
 	routing "github.com/qiangxue/fasthttp-routing"
+	"github.com/jackc/pgx/v5"
 	stripe "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/checkout/session"
 	stripewh "github.com/stripe/stripe-go/v76/webhook"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // PremiumUser tracks active premium subscriptions linked to a user.
 type PremiumUser struct {
-	UserID           string    `bson:"user_id"`
-	PremiumUntil     time.Time `bson:"premium_until"`
-	StripeCustomerID string    `bson:"stripe_customer_id"`
+	UserID           string
+	PremiumUntil     time.Time
+	StripeCustomerID string
 }
 
 // premiumStore abstracts premium-subscription persistence so tests can inject
-// an in-memory stub without a live MongoDB connection.
+// an in-memory stub without a live database connection.
 type premiumStore interface {
 	activate(userID, stripeCustomerID string) error
 	extend(stripeCustomerID, userID string, periodEnd time.Time) error
@@ -32,35 +32,35 @@ type premiumStore interface {
 	checkPremium(ctx context.Context, userID string) (bool, error)
 }
 
-// premiums is the active store; defaults to mongoPremiumStore and is
+// premiums is the active store; defaults to pgPremiumStore and is
 // overridden in tests.
-var premiums premiumStore = mongoPremiumStore{}
+var premiums premiumStore = pgPremiumStore{}
 
-// mongoPremiumStore delegates to the MongoDB-backed helpers below.
-type mongoPremiumStore struct{}
+// pgPremiumStore delegates to the Postgres-backed helpers below.
+type pgPremiumStore struct{}
 
-func (mongoPremiumStore) activate(userID, stripeCustomerID string) error {
+func (pgPremiumStore) activate(userID, stripeCustomerID string) error {
 	return activatePremium(userID, stripeCustomerID)
 }
-func (mongoPremiumStore) extend(stripeCustomerID, userID string, periodEnd time.Time) error {
+func (pgPremiumStore) extend(stripeCustomerID, userID string, periodEnd time.Time) error {
 	return extendPremium(stripeCustomerID, userID, periodEnd)
 }
-func (mongoPremiumStore) deactivateByCustomer(stripeCustomerID string) error {
+func (pgPremiumStore) deactivateByCustomer(stripeCustomerID string) error {
 	return deactivatePremiumByCustomer(stripeCustomerID)
 }
-func (mongoPremiumStore) checkPremium(ctx context.Context, userID string) (bool, error) {
+func (pgPremiumStore) checkPremium(ctx context.Context, userID string) (bool, error) {
 	return isPremium(ctx, userID)
 }
 
-func stripeKey() string        { return os.Getenv("STRIPE_SECRET_KEY") }
+func stripeKey() string           { return os.Getenv("STRIPE_SECRET_KEY") }
 func stripeWebhookSecret() string { return os.Getenv("STRIPE_WEBHOOK_SECRET") }
-func premiumPriceID() string   { return os.Getenv("STRIPE_PREMIUM_PRICE_ID") }
+func premiumPriceID() string      { return os.Getenv("STRIPE_PREMIUM_PRICE_ID") }
 
 func appBaseURL() string {
 	if u := os.Getenv("APP_BASE_URL"); u != "" {
 		return u
 	}
-	return "https://gamescrobble.com"
+	return "https://gameroom.hdynamic.app"
 }
 
 // createCheckoutSession creates a Stripe Checkout session for a premium subscription.
@@ -215,18 +215,16 @@ func handleStripeWebhook(c *routing.Context) error {
 // period end (see extendPremium).
 func activatePremium(userID, stripeCustomerID string) error {
 	until := time.Now().Add(7 * 24 * time.Hour)
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
-	_, err := mongoClient.Database("Gamium").Collection("premium_users").UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "premium_until", Value: until},
-			{Key: "stripe_customer_id", Value: stripeCustomerID},
-		}}},
-		options.Update().SetUpsert(true),
-	)
+	_, err := db.Exec(ctx, `
+		INSERT INTO premium_users (user_id, premium_until, stripe_customer_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id) DO UPDATE SET
+			premium_until      = $2,
+			stripe_customer_id = $3
+	`, userID, until, stripeCustomerID)
 	return err
 }
 
@@ -249,24 +247,23 @@ func invoicePeriodEnd(inv *stripe.Invoice) time.Time {
 }
 
 // extendPremium pushes premium_until out to the paid period's end plus a grace
-// window covering renewal-payment delays. $max guarantees a replayed or
+// window covering renewal-payment delays. GREATEST guarantees a replayed or
 // out-of-order webhook never shortens an existing entitlement.
 func extendPremium(stripeCustomerID, userID string, periodEnd time.Time) error {
 	until := periodEnd.Add(72 * time.Hour)
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
-	col := mongoClient.Database("Gamium").Collection("premium_users")
-
 	if stripeCustomerID != "" {
-		res, err := col.UpdateOne(ctx,
-			bson.D{{Key: "stripe_customer_id", Value: stripeCustomerID}},
-			bson.D{{Key: "$max", Value: bson.D{{Key: "premium_until", Value: until}}}},
-		)
+		tag, err := db.Exec(ctx, `
+			UPDATE premium_users
+			SET premium_until = GREATEST(premium_until, $1)
+			WHERE stripe_customer_id = $2
+		`, until, stripeCustomerID)
 		if err != nil {
 			return err
 		}
-		if res.MatchedCount > 0 {
+		if tag.RowsAffected() > 0 {
 			return nil
 		}
 	}
@@ -277,45 +274,40 @@ func extendPremium(stripeCustomerID, userID string, periodEnd time.Time) error {
 	if userID == "" {
 		return fmt.Errorf("no premium_users match for customer %q and no user_id metadata", stripeCustomerID)
 	}
-	set := bson.D{{Key: "user_id", Value: userID}}
-	if stripeCustomerID != "" {
-		set = append(set, bson.E{Key: "stripe_customer_id", Value: stripeCustomerID})
-	}
-	_, err := col.UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		bson.D{
-			{Key: "$max", Value: bson.D{{Key: "premium_until", Value: until}}},
-			{Key: "$set", Value: set},
-		},
-		options.Update().SetUpsert(true),
-	)
+	_, err := db.Exec(ctx, `
+		INSERT INTO premium_users (user_id, premium_until, stripe_customer_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id) DO UPDATE SET
+			premium_until      = GREATEST(premium_users.premium_until, $2),
+			stripe_customer_id = CASE WHEN $3 <> '' THEN $3 ELSE premium_users.stripe_customer_id END
+	`, userID, until, stripeCustomerID)
 	return err
 }
 
 // deactivatePremiumByCustomer expires the premium entitlement when a subscription is cancelled.
 func deactivatePremiumByCustomer(stripeCustomerID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
-	_, err := mongoClient.Database("Gamium").Collection("premium_users").UpdateOne(ctx,
-		bson.D{{Key: "stripe_customer_id", Value: stripeCustomerID}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "premium_until", Value: time.Now()},
-		}}},
+	_, err := db.Exec(ctx,
+		`UPDATE premium_users SET premium_until = NOW() WHERE stripe_customer_id = $1`,
+		stripeCustomerID,
 	)
 	return err
 }
 
 // isPremium returns true when the user has an active premium subscription.
 func isPremium(ctx context.Context, userID string) (bool, error) {
-	c, cancel := context.WithTimeout(ctx, mongoUpdateTimeout)
+	c, cancel := context.WithTimeout(ctx, dbTimeout)
 	defer cancel()
 
-	var user PremiumUser
-	err := mongoClient.Database("Gamium").Collection("premium_users").
-		FindOne(c, bson.D{{Key: "user_id", Value: userID}}).Decode(&user)
-	if err != nil {
+	var until time.Time
+	err := db.QueryRow(c, `SELECT premium_until FROM premium_users WHERE user_id = $1`, userID).Scan(&until)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
-	return user.PremiumUntil.After(time.Now()), nil
+	if err != nil {
+		return false, err
+	}
+	return until.After(time.Now()), nil
 }

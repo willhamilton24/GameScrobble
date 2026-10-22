@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,18 +16,17 @@ import (
 	"time"
 
 	routing "github.com/qiangxue/fasthttp-routing"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// User is a registered account stored in the users collection.
+// User is a registered account stored in the users table.
 type User struct {
-	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Email        string             `bson:"email" json:"email"`
-	PasswordHash string             `bson:"password_hash" json:"-"`
-	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // oauthHTTPClient is shared by all OAuth provider helpers.
@@ -41,6 +42,15 @@ func writeJSONError(c *routing.Context, status int, msg string) {
 	c.SetContentType("application/json")
 	out, _ := json.Marshal(map[string]string{"error": msg})
 	c.Write(out)
+}
+
+// newUserID returns a random 32-character hex string for use as a user ID.
+func newUserID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("failed to generate user ID: " + err.Error())
+	}
+	return fmt.Sprintf("%x", b)
 }
 
 // signToken creates a signed HS256 JWT with a 30-day expiry.
@@ -167,18 +177,6 @@ func registerUser(c *routing.Context) error {
 		return nil
 	}
 
-	col := mongoClient.Database("Gamium").Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-	defer cancel()
-
-	var existing User
-	if col.FindOne(ctx, bson.D{{Key: "email", Value: req.Email}}).Decode(&existing) == nil {
-		c.SetStatusCode(409)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"email already registered"}`)
-		return nil
-	}
-
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.SetStatusCode(500)
@@ -187,14 +185,17 @@ func registerUser(c *routing.Context) error {
 		return nil
 	}
 
-	user := User{
-		ID:           primitive.NewObjectID(),
-		Email:        req.Email,
-		PasswordHash: string(hash),
-		CreatedAt:    time.Now().UTC(),
-	}
-	if _, err = col.InsertOne(ctx, user); err != nil {
-		if mongo.IsDuplicateKeyError(err) {
+	id := newUserID()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	_, err = db.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)`,
+		id, req.Email, string(hash), time.Now().UTC(),
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			c.SetStatusCode(409)
 			c.SetContentType("application/json")
 			c.WriteString(`{"error":"email already registered"}`)
@@ -206,7 +207,7 @@ func registerUser(c *routing.Context) error {
 		return nil
 	}
 
-	token, err := signToken(user.ID.Hex())
+	token, err := signToken(id)
 	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
@@ -218,7 +219,7 @@ func registerUser(c *routing.Context) error {
 	c.SetContentType("application/json")
 	out, _ := json.Marshal(map[string]interface{}{
 		"token": token,
-		"user":  map[string]string{"id": user.ID.Hex(), "email": user.Email},
+		"user":  map[string]string{"id": id, "email": req.Email},
 	})
 	c.Write(out)
 	return nil
@@ -239,15 +240,22 @@ func loginUser(c *routing.Context) error {
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 
-	col := mongoClient.Database("Gamium").Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
 	var user User
-	if err := col.FindOne(ctx, bson.D{{Key: "email", Value: req.Email}}).Decode(&user); err != nil {
+	err := db.QueryRow(ctx, `SELECT id, email, password_hash FROM users WHERE email = $1`, req.Email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.SetStatusCode(401)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"invalid email or password"}`)
+		return nil
+	}
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"database error"}`)
 		return nil
 	}
 
@@ -258,7 +266,7 @@ func loginUser(c *routing.Context) error {
 		return nil
 	}
 
-	token, err := signToken(user.ID.Hex())
+	token, err := signToken(user.ID)
 	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
@@ -269,7 +277,7 @@ func loginUser(c *routing.Context) error {
 	c.SetContentType("application/json")
 	out, _ := json.Marshal(map[string]interface{}{
 		"token": token,
-		"user":  map[string]string{"id": user.ID.Hex(), "email": user.Email},
+		"user":  map[string]string{"id": user.ID, "email": user.Email},
 	})
 	c.Write(out)
 	return nil
@@ -279,28 +287,27 @@ func loginUser(c *routing.Context) error {
 func getMe(c *routing.Context) error {
 	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
 
-	objID, err := primitive.ObjectIDFromHex(userID)
-	if err != nil {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"invalid user ID"}`)
-		return nil
-	}
-
-	col := mongoClient.Database("Gamium").Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
 	var user User
-	if err = col.FindOne(ctx, bson.D{{Key: "_id", Value: objID}}).Decode(&user); err != nil {
+	err := db.QueryRow(ctx, `SELECT id, email FROM users WHERE id = $1`, userID).
+		Scan(&user.ID, &user.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.SetStatusCode(404)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"user not found"}`)
 		return nil
 	}
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"database error"}`)
+		return nil
+	}
 
 	c.SetContentType("application/json")
-	out, _ := json.Marshal(map[string]string{"id": user.ID.Hex(), "email": user.Email})
+	out, _ := json.Marshal(map[string]string{"id": user.ID, "email": user.Email})
 	c.Write(out)
 	return nil
 }

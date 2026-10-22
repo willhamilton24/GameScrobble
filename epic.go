@@ -12,16 +12,14 @@ import (
 	"time"
 
 	routing "github.com/qiangxue/fasthttp-routing"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // EpicLink records an Epic Games account association.
 type EpicLink struct {
-	UserID      string    `bson:"user_id" json:"user_id"`
-	EpicID      string    `bson:"epic_id" json:"epic_id"`
-	DisplayName string    `bson:"display_name" json:"display_name"`
-	LinkedAt    time.Time `bson:"linked_at" json:"linked_at"`
+	UserID      string    `json:"user_id"`
+	EpicID      string    `json:"epic_id"`
+	DisplayName string    `json:"display_name"`
+	LinkedAt    time.Time `json:"linked_at"`
 }
 
 func epicClientID() string     { return os.Getenv("EPIC_CLIENT_ID") }
@@ -89,14 +87,17 @@ func epicCallback(c *routing.Context) error {
 		return nil
 	}
 
-	link := EpicLink{UserID: userID, EpicID: epicID, DisplayName: displayName, LinkedAt: time.Now().UTC()}
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	if _, err = mongoClient.Database("Gamium").Collection("epic_links").UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		bson.D{{Key: "$set", Value: link}},
-		options.Update().SetUpsert(true),
-	); err != nil {
+	_, err = db.Exec(ctx, `
+		INSERT INTO epic_links (user_id, epic_id, display_name, linked_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id) DO UPDATE SET
+			epic_id      = $2,
+			display_name = $3,
+			linked_at    = $4
+	`, userID, epicID, displayName, time.Now().UTC())
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to save Epic link"}`)
