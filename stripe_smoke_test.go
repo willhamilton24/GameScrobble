@@ -20,8 +20,6 @@ import (
 
 	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // ---------------------------------------------------------------------------
@@ -209,15 +207,15 @@ func TestStripeSmoke(t *testing.T) {
 	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
 
 	oldFindExportHistory := findExportHistory
-	findExportHistory = func(_ context.Context, userID string) (*mongo.Cursor, error) {
+	findExportHistory = func(_ context.Context, userID string) ([]exportRow, error) {
 		if userID != smokeUserID {
 			t.Fatalf("unexpected export user: %q", userID)
 		}
-		// No polling timestamp has been recorded for this fixture.
-		return mongo.NewCursorFromDocuments([]interface{}{
-			bson.M{"app_id": 440, "name": "Team Fortress 2", "playtime_total": 120, "playtime_recent": 30},
-			bson.M{"app_id": 570, "name": "Game, with comma", "playtime_total": 90, "playtime_recent": 15},
-		}, nil, nil)
+		// LastPolled is zero so the CSV last_polled column is empty.
+		return []exportRow{
+			{AppID: 440, Name: "Team Fortress 2", PlaytimeTotal: 120, PlaytimeRecent: 30},
+			{AppID: 570, Name: "Game, with comma", PlaytimeTotal: 90, PlaytimeRecent: 15},
+		}, nil
 	}
 	t.Cleanup(func() { findExportHistory = oldFindExportHistory })
 

@@ -4,65 +4,48 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
-	routing "github.com/qiangxue/fasthttp-routing"
-	"github.com/valyala/fasthttp"
-	"github.com/valyala/fastjson"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	routing "github.com/qiangxue/fasthttp-routing"
+	"github.com/valyala/fasthttp"
+	"github.com/valyala/fastjson"
 )
 
-var mongoClient *mongo.Client
-
 const steamRequestTimeout = 5 * time.Second
-const mongoUpdateTimeout = 5 * time.Second
 
 var steamHTTPGet = fasthttp.GetTimeout
 
 // Only authMiddleware (auth.go) may set this context key.
 type authenticatedUserIDKey struct{}
 
-type steamLinkUpdater interface {
-	UpdateOne(context.Context, interface{}, interface{}, ...*options.UpdateOptions) (*mongo.UpdateResult, error)
-}
-
-func saveSteamLink(parent context.Context, collection steamLinkUpdater, link SteamLink) error {
-	ctx, cancel := context.WithTimeout(parent, mongoUpdateTimeout)
-	defer cancel()
-	_, err := collection.UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: link.UserID}},
-		bson.D{{Key: "$set", Value: link}}, options.Update().SetUpsert(true))
-	return err
-}
-
 type Offer struct {
-	Vendor     string
-	Digital    bool
-	Platform   string
-	Url        string
-	InternalId string
+	Vendor     string `json:"vendor"`
+	Digital    bool   `json:"digital"`
+	Platform   string `json:"platform"`
+	Url        string `json:"url"`
+	InternalId string `json:"internal_id"`
 }
 
 type Game struct {
-	Title             string
-	Img               string
-	Dev               string
-	Pub               string
-	RDate             string
-	Metacritic        string
-	PcOffers          []Offer
-	XboxOffers        []Offer
-	PlaystationOffers []Offer
-	SwitchOffers      []Offer
-	Dlc               []DLC
-	Platforms         []string
+	Title             string   `json:"title"`
+	Img               string   `json:"img"`
+	Dev               string   `json:"dev"`
+	Pub               string   `json:"pub"`
+	RDate             string   `json:"rdate"`
+	Metacritic        string   `json:"metacritic"`
+	PcOffers          []Offer  `json:"pc_offers"`
+	XboxOffers        []Offer  `json:"xbox_offers"`
+	PlaystationOffers []Offer  `json:"playstation_offers"`
+	SwitchOffers      []Offer  `json:"switch_offers"`
+	Platforms         []string `json:"platforms"`
 }
 
 type DLC struct {
@@ -82,18 +65,18 @@ type SteamResult struct {
 
 // SteamLink records an unverified association; public profile lookup does not prove ownership.
 type SteamLink struct {
-	UserID            string `bson:"user_id" json:"user_id"`
-	SteamID           string `bson:"steam_id" json:"steam_id"`
-	OwnershipVerified bool   `bson:"ownership_verified" json:"ownership_verified"`
+	UserID            string `json:"user_id"`
+	SteamID           string `json:"steam_id"`
+	OwnershipVerified bool   `json:"ownership_verified"`
 }
 
 // PlayActivity records a daily playtime delta used to build the public profile heatmap.
 type PlayActivity struct {
-	UserID  string `bson:"user_id"`
-	AppID   int    `bson:"app_id"`
-	Name    string `bson:"name"`
-	Date    string `bson:"date"` // YYYY-MM-DD
-	Minutes int    `bson:"minutes"`
+	UserID  string
+	AppID   int
+	Name    string
+	Date    string // YYYY-MM-DD
+	Minutes int
 }
 
 // PublicGame is one entry in the public profile year-in-games list.
@@ -107,6 +90,15 @@ type PublicGame struct {
 type HeatmapDay struct {
 	Date    string `json:"date"`
 	Minutes int    `json:"minutes"`
+}
+
+// ScrobbleStat is one entry in the deep-stats response.
+type ScrobbleStat struct {
+	AppID          int       `json:"app_id"`
+	Name           string    `json:"name"`
+	PlaytimeTotal  int       `json:"playtime_total"`
+	PlaytimeRecent int       `json:"playtime_recent"`
+	LastPolled     time.Time `json:"last_polled"`
 }
 
 //
@@ -158,80 +150,70 @@ func readSteamGame(i int) {
 
 	if fastjson.GetString(resp, id, "data", "type") == "game" {
 		fmt.Println("Game")
-		// Check Existance
-		filter := bson.D{{"title", title}}
-		var result Game
-		collection := *mongoClient.Database("Gamium").Collection("games")
 
-		if err = collection.FindOne(context.TODO(), filter).Decode(&result); err != nil {
-			errStr := err.Error()
-			if errStr == "mongo: no documents in result" {
-				fmt.Println("NOT SAVED")
+		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancel()
 
-				// XX Shelved XX
-				// Check for DLC Array
-				// Iterate Through DLC
-				//dlcIds := getDLCArray(resp, id)
-				//fmt.Println(strconv.Itoa(dlcIds[0]))
+		var existing string
+		err = db.QueryRow(ctx, `SELECT title FROM games WHERE title = $1`, title).Scan(&existing)
+		if errors.Is(err, pgx.ErrNoRows) {
+			fmt.Println("NOT SAVED")
 
-				// Make Game Struct
-				newGame := Game{
-					Title:             title,
-					Img:               fastjson.GetString(resp, id, "data", "header_image"),
-					Dev:               fastjson.GetString(resp, id, "data", "developers", "0"),
-					Pub:               fastjson.GetString(resp, id, "data", "publishers", "0"),
-					RDate:             fastjson.GetString(resp, id, "data", "release_date", "date"),
-					Metacritic:        fastjson.GetString(resp, id, "data", "metacritic", "url"),
-					PcOffers:          []Offer{},
-					XboxOffers:        []Offer{},
-					PlaystationOffers: []Offer{},
-					SwitchOffers:      []Offer{},
-					Dlc:               []DLC{},
-					Platforms:         []string{},
-				}
-				if fastjson.GetBool(resp, id, "data", "platforms", "windows") {
-					newGame.Platforms = append(newGame.Platforms, "windows")
-				}
-				if fastjson.GetBool(resp, id, "data", "platforms", "mac") {
-					newGame.Platforms = append(newGame.Platforms, "mac")
-				}
-				if fastjson.GetBool(resp, id, "data", "platforms", "linux") {
-					newGame.Platforms = append(newGame.Platforms, "linux")
-				}
-
-				// Offer
-				appid := strconv.Itoa(fastjson.GetInt(resp, id, "data", "steam_appid"))
-				newOffer := Offer{
-					Vendor:     "steam",
-					Digital:    true,
-					Platform:   "pc",
-					Url:        "https://store.steampowered.com/app/" + appid + "/",
-					InternalId: appid,
-				}
-				fmt.Println(newOffer)
-				newGame.PcOffers = append(newGame.PcOffers, newOffer)
-
-				fmt.Println(newGame)
-
-				// Add to DB
-				writeCtx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-				insertResult, err2 := collection.InsertOne(writeCtx, newGame)
-				cancel()
-				if err2 != nil {
-					log.Fatal(err)
-				}
-
-				fmt.Println("Inserted a single document: ", insertResult.InsertedID)
-			} else {
-				fmt.Println(err.Error())
+			newGame := Game{
+				Title:             title,
+				Img:               fastjson.GetString(resp, id, "data", "header_image"),
+				Dev:               fastjson.GetString(resp, id, "data", "developers", "0"),
+				Pub:               fastjson.GetString(resp, id, "data", "publishers", "0"),
+				RDate:             fastjson.GetString(resp, id, "data", "release_date", "date"),
+				Metacritic:        fastjson.GetString(resp, id, "data", "metacritic", "url"),
+				PcOffers:          []Offer{},
+				XboxOffers:        []Offer{},
+				PlaystationOffers: []Offer{},
+				SwitchOffers:      []Offer{},
+				Platforms:         []string{},
 			}
+			if fastjson.GetBool(resp, id, "data", "platforms", "windows") {
+				newGame.Platforms = append(newGame.Platforms, "windows")
+			}
+			if fastjson.GetBool(resp, id, "data", "platforms", "mac") {
+				newGame.Platforms = append(newGame.Platforms, "mac")
+			}
+			if fastjson.GetBool(resp, id, "data", "platforms", "linux") {
+				newGame.Platforms = append(newGame.Platforms, "linux")
+			}
+
+			appid := strconv.Itoa(fastjson.GetInt(resp, id, "data", "steam_appid"))
+			newOffer := Offer{
+				Vendor:     "steam",
+				Digital:    true,
+				Platform:   "pc",
+				Url:        "https://store.steampowered.com/app/" + appid + "/",
+				InternalId: appid,
+			}
+			fmt.Println(newOffer)
+			newGame.PcOffers = append(newGame.PcOffers, newOffer)
+			fmt.Println(newGame)
+
+			pcJSON, _ := json.Marshal(newGame.PcOffers)
+			platformsJSON, _ := json.Marshal(newGame.Platforms)
+
+			_, err2 := db.Exec(ctx, `
+				INSERT INTO games (title, img, dev, pub, rdate, metacritic, pc_offers, xbox_offers, playstation_offers, switch_offers, platforms)
+				VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, $8::jsonb)
+				ON CONFLICT (title) DO NOTHING
+			`, newGame.Title, newGame.Img, newGame.Dev, newGame.Pub, newGame.RDate, newGame.Metacritic,
+				string(pcJSON), string(platformsJSON))
+			if err2 != nil {
+				log.Printf("readSteamGame: insert error for %q: %v", title, err2)
+			} else {
+				fmt.Println("Inserted game:", title)
+			}
+		} else if err != nil {
+			fmt.Println(err.Error())
 		} else {
-			fmt.Println(result)
-			// Offer
+			fmt.Println(existing)
 		}
-
 	}
-
 }
 
 func scrapeSteam(latency time.Duration) {
@@ -430,9 +412,16 @@ func linkAccount(c *routing.Context) error {
 
 	personaName := string(players[0].GetStringBytes("personaname"))
 
-	// Upsert the link in MongoDB
-	collection := mongoClient.Database("Gamium").Collection("steam_links")
-	if err = saveSteamLink(c.RequestCtx, collection, link); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	_, err = db.Exec(ctx, `
+		INSERT INTO steam_links (user_id, steam_id, ownership_verified)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id) DO UPDATE SET
+			steam_id           = $2,
+			ownership_verified = $3
+	`, link.UserID, link.SteamID, link.OwnershipVerified)
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to save Steam link"}`)
@@ -475,48 +464,76 @@ func getDeepStats(c *routing.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	pipeline := mongo.Pipeline{
-		{{Key: "$match", Value: bson.D{{Key: "user_id", Value: userID}}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$app_id"},
-			{Key: "name", Value: bson.D{{Key: "$last", Value: "$name"}}},
-			{Key: "playtime_total", Value: bson.D{{Key: "$max", Value: "$playtime_total"}}},
-			{Key: "playtime_recent", Value: bson.D{{Key: "$last", Value: "$playtime_recent"}}},
-			{Key: "last_polled", Value: bson.D{{Key: "$max", Value: "$last_polled"}}},
-		}}},
-		{{Key: "$sort", Value: bson.D{{Key: "playtime_total", Value: -1}}}},
-	}
-
-	cursor, err2 := mongoClient.Database("Gamium").Collection("scrobbles").Aggregate(ctx, pipeline)
-	if err2 != nil {
+	rows, err := db.Query(ctx, `
+		SELECT app_id, name, playtime_total, playtime_recent, last_polled
+		FROM scrobbles
+		WHERE user_id = $1
+		ORDER BY playtime_total DESC
+	`, userID)
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to fetch stats"}`)
 		return nil
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var results []bson.M
-	if err2 = cursor.All(ctx, &results); err2 != nil {
+	stats := []ScrobbleStat{}
+	for rows.Next() {
+		var s ScrobbleStat
+		if err := rows.Scan(&s.AppID, &s.Name, &s.PlaytimeTotal, &s.PlaytimeRecent, &s.LastPolled); err != nil {
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch stats"}`)
+			return nil
+		}
+		stats = append(stats, s)
+	}
+	if err := rows.Err(); err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"failed to decode stats"}`)
+		c.WriteString(`{"error":"failed to fetch stats"}`)
 		return nil
-	}
-	if results == nil {
-		results = []bson.M{}
 	}
 
 	c.SetContentType("application/json")
-	out, _ := json.Marshal(map[string]interface{}{"stats": results})
+	out, _ := json.Marshal(map[string]interface{}{"stats": stats})
 	c.Write(out)
 	return nil
 }
 
-// findExportHistory can be replaced with an in-memory cursor in handler tests.
-var findExportHistory = func(ctx context.Context, userID string) (*mongo.Cursor, error) {
-	return mongoClient.Database("Gamium").Collection("scrobbles").
-		Find(ctx, bson.D{{Key: "user_id", Value: userID}})
+// exportRow holds one scrobble entry for CSV export.
+type exportRow struct {
+	AppID          int
+	Name           string
+	PlaytimeTotal  int
+	PlaytimeRecent int
+	LastPolled     time.Time
+}
+
+// findExportHistory can be replaced in tests to avoid a live DB connection.
+var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, error) {
+	rows, err := db.Query(ctx, `
+		SELECT app_id, name, playtime_total, playtime_recent, last_polled
+		FROM scrobbles
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []exportRow
+	for rows.Next() {
+		var r exportRow
+		if err := rows.Scan(&r.AppID, &r.Name, &r.PlaytimeTotal, &r.PlaytimeRecent, &r.LastPolled); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // exportHistory streams a CSV of all scrobbles for a user (premium only).
@@ -541,13 +558,12 @@ func exportHistory(c *routing.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cursor, err2 := findExportHistory(ctx, userID)
+	rows, err2 := findExportHistory(ctx, userID)
 	if err2 != nil {
 		c.SetStatusCode(500)
 		c.WriteString("failed to fetch history")
 		return nil
 	}
-	defer cursor.Close(ctx)
 
 	c.SetContentType("text/csv")
 	c.Response.Header.Set("Content-Disposition", `attachment; filename="gamescrobble_history.csv"`)
@@ -555,20 +571,18 @@ func exportHistory(c *routing.Context) error {
 	w := csv.NewWriter(c)
 	_ = w.Write([]string{"app_id", "name", "playtime_total_minutes", "playtime_recent_minutes", "last_polled"})
 
-	for cursor.Next(ctx) {
-		var row bson.M
-		if err3 := cursor.Decode(&row); err3 != nil {
-			continue
+	for _, row := range rows {
+		lastPolledStr := ""
+		if !row.LastPolled.IsZero() {
+			lastPolledStr = row.LastPolled.UTC().Format(time.RFC3339)
 		}
-		appID := fmt.Sprintf("%v", row["app_id"])
-		name, _ := row["name"].(string)
-		playtimeTotal := fmt.Sprintf("%v", row["playtime_total"])
-		playtimeRecent := fmt.Sprintf("%v", row["playtime_recent"])
-		lastPolled := ""
-		if t, ok2 := row["last_polled"].(time.Time); ok2 {
-			lastPolled = t.UTC().Format(time.RFC3339)
-		}
-		_ = w.Write([]string{appID, name, playtimeTotal, playtimeRecent, lastPolled})
+		_ = w.Write([]string{
+			strconv.Itoa(row.AppID),
+			row.Name,
+			strconv.Itoa(row.PlaytimeTotal),
+			strconv.Itoa(row.PlaytimeRecent),
+			lastPolledStr,
+		})
 	}
 	w.Flush()
 	return nil
@@ -579,18 +593,33 @@ func exportHistory(c *routing.Context) error {
 func getGameDeals(c *routing.Context) error {
 	title := c.Param("title")
 
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
 	var game Game
-	err := mongoClient.Database("Gamium").Collection("games").
-		FindOne(ctx, bson.D{{Key: "title", Value: title}}).Decode(&game)
-	if err != nil {
+	var pcJSON, xboxJSON, psJSON, switchJSON []byte
+	err := db.QueryRow(ctx, `
+		SELECT title, img, pc_offers, xbox_offers, playstation_offers, switch_offers
+		FROM games
+		WHERE title = $1
+	`, title).Scan(&game.Title, &game.Img, &pcJSON, &xboxJSON, &psJSON, &switchJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.SetStatusCode(404)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"game not found"}`)
 		return nil
 	}
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"database error"}`)
+		return nil
+	}
+
+	json.Unmarshal(pcJSON, &game.PcOffers)
+	json.Unmarshal(xboxJSON, &game.XboxOffers)
+	json.Unmarshal(psJSON, &game.PlaystationOffers)
+	json.Unmarshal(switchJSON, &game.SwitchOffers)
 
 	tagOffers := func(offers []Offer) []map[string]interface{} {
 		result := make([]map[string]interface{}, 0, len(offers))
@@ -632,153 +661,88 @@ func getPublicProfile(c *routing.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	actColl := mongoClient.Database("Gamium").Collection("play_activity")
-
 	// Top games this calendar year, ranked by total minutes.
-	topPipeline := mongo.Pipeline{
-		{{Key: "$match", Value: bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "date", Value: bson.D{{Key: "$gte", Value: startOfYear}}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$app_id"},
-			{Key: "name", Value: bson.D{{Key: "$last", Value: "$name"}}},
-			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
-		}}},
-		{{Key: "$sort", Value: bson.D{{Key: "minutes", Value: -1}}}},
-		{{Key: "$limit", Value: 10}},
-	}
-	cursor, err := actColl.Aggregate(ctx, topPipeline)
+	topRows, err := db.Query(ctx, `
+		SELECT app_id, MAX(name) AS name, SUM(minutes) AS minutes
+		FROM play_activity
+		WHERE user_id = $1 AND date >= $2
+		GROUP BY app_id
+		ORDER BY minutes DESC
+		LIMIT 10
+	`, userID, startOfYear)
 	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to fetch games"}`)
 		return nil
 	}
-	defer cursor.Close(ctx)
-	var rawGames []bson.M
-	if err = cursor.All(ctx, &rawGames); err != nil {
-		c.SetStatusCode(500)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"failed to decode games"}`)
-		return nil
-	}
+	defer topRows.Close()
 
-	topGames := make([]PublicGame, 0, len(rawGames))
-	for _, g := range rawGames {
-		pg := PublicGame{Name: fmt.Sprintf("%v", g["name"])}
-		switch v := g["_id"].(type) {
-		case int32:
-			pg.AppID = int(v)
-		case int64:
-			pg.AppID = int(v)
-		case int:
-			pg.AppID = v
-		}
-		switch v := g["minutes"].(type) {
-		case int32:
-			pg.Minutes = int(v)
-		case int64:
-			pg.Minutes = int(v)
-		case int:
-			pg.Minutes = v
+	topGames := []PublicGame{}
+	for topRows.Next() {
+		var pg PublicGame
+		if err := topRows.Scan(&pg.AppID, &pg.Name, &pg.Minutes); err != nil {
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch games"}`)
+			return nil
 		}
 		topGames = append(topGames, pg)
 	}
-
-	// Totals across all games this year (not just the top 10).
-	totalsPipeline := mongo.Pipeline{
-		{{Key: "$match", Value: bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "date", Value: bson.D{{Key: "$gte", Value: startOfYear}}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$app_id"},
-			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: nil},
-			{Key: "total_minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
-			{Key: "total_games", Value: bson.D{{Key: "$sum", Value: 1}}},
-		}}},
+	if err := topRows.Err(); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch games"}`)
+		return nil
 	}
-	totalsCursor, err := actColl.Aggregate(ctx, totalsPipeline)
-	if err != nil {
+
+	topRows.Close()
+
+	// Totals across all games this year.
+	var totalMinutes, totalGames int
+	if err := db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(minutes), 0), COUNT(DISTINCT app_id)
+		FROM play_activity
+		WHERE user_id = $1 AND date >= $2
+	`, userID, startOfYear).Scan(&totalMinutes, &totalGames); err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to fetch totals"}`)
 		return nil
 	}
-	defer totalsCursor.Close(ctx)
-	var rawTotals []bson.M
-	if err = totalsCursor.All(ctx, &rawTotals); err != nil {
-		c.SetStatusCode(500)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"failed to decode totals"}`)
-		return nil
-	}
-
-	totalMinutes := 0
-	totalGames := 0
-	if len(rawTotals) > 0 {
-		switch v := rawTotals[0]["total_minutes"].(type) {
-		case int32:
-			totalMinutes = int(v)
-		case int64:
-			totalMinutes = int(v)
-		case int:
-			totalMinutes = v
-		}
-		switch v := rawTotals[0]["total_games"].(type) {
-		case int32:
-			totalGames = int(v)
-		case int64:
-			totalGames = int(v)
-		case int:
-			totalGames = v
-		}
-	}
 
 	// Daily activity totals for the past 52 weeks (heatmap).
-	heatPipeline := mongo.Pipeline{
-		{{Key: "$match", Value: bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "date", Value: bson.D{{Key: "$gte", Value: yearAgo}}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$date"},
-			{Key: "minutes", Value: bson.D{{Key: "$sum", Value: "$minutes"}}},
-		}}},
-		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
-	}
-	cursor2, err2 := actColl.Aggregate(ctx, heatPipeline)
-	if err2 != nil {
+	heatRows, err := db.Query(ctx, `
+		SELECT date, SUM(minutes) AS minutes
+		FROM play_activity
+		WHERE user_id = $1 AND date >= $2
+		GROUP BY date
+		ORDER BY date ASC
+	`, userID, yearAgo)
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to fetch heatmap"}`)
 		return nil
 	}
-	defer cursor2.Close(ctx)
-	var rawHeat []bson.M
-	if err2 = cursor2.All(ctx, &rawHeat); err2 != nil {
-		c.SetStatusCode(500)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"failed to decode heatmap"}`)
-		return nil
-	}
+	defer heatRows.Close()
 
-	heatmap := make([]HeatmapDay, 0, len(rawHeat))
-	for _, h := range rawHeat {
-		hd := HeatmapDay{Date: fmt.Sprintf("%v", h["_id"])}
-		switch v := h["minutes"].(type) {
-		case int32:
-			hd.Minutes = int(v)
-		case int64:
-			hd.Minutes = int(v)
-		case int:
-			hd.Minutes = v
+	heatmap := []HeatmapDay{}
+	for heatRows.Next() {
+		var hd HeatmapDay
+		if err := heatRows.Scan(&hd.Date, &hd.Minutes); err != nil {
+			c.SetStatusCode(500)
+			c.SetContentType("application/json")
+			c.WriteString(`{"error":"failed to fetch heatmap"}`)
+			return nil
 		}
 		heatmap = append(heatmap, hd)
+	}
+	if err := heatRows.Err(); err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to fetch heatmap"}`)
+		return nil
 	}
 
 	c.SetContentType("application/json")
@@ -837,7 +801,6 @@ func pollUserScrobbles(steamID, userID, key string) {
 		return
 	}
 
-	coll := mongoClient.Database("Gamium").Collection("scrobbles")
 	now := time.Now().UTC()
 
 	for _, g := range games {
@@ -847,38 +810,22 @@ func pollUserScrobbles(steamID, userID, key string) {
 		playtimeRecent := g.GetInt("playtime_2weeks")
 
 		// Record daily playtime delta for the public-profile heatmap.
-		findCtx, findCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-		var existing bson.M
-		findErr := coll.FindOne(findCtx, bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "app_id", Value: appID},
-		}).Decode(&existing)
+		findCtx, findCancel := context.WithTimeout(context.Background(), dbTimeout)
+		var oldPT int
+		findErr := db.QueryRow(findCtx, `
+			SELECT playtime_total FROM scrobbles WHERE user_id = $1 AND app_id = $2
+		`, userID, appID).Scan(&oldPT)
 		findCancel()
 		if findErr == nil {
-			oldPT := 0
-			switch v := existing["playtime_total"].(type) {
-			case int32:
-				oldPT = int(v)
-			case int64:
-				oldPT = int(v)
-			case int:
-				oldPT = v
-			}
 			if delta := playtimeTotal - oldPT; delta > 0 {
-				actColl := mongoClient.Database("Gamium").Collection("play_activity")
-				actCtx, actCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-				_, actErr := actColl.UpdateOne(actCtx,
-					bson.D{
-						{Key: "user_id", Value: userID},
-						{Key: "app_id", Value: appID},
-						{Key: "date", Value: now.Format("2006-01-02")},
-					},
-					bson.D{
-						{Key: "$inc", Value: bson.D{{Key: "minutes", Value: delta}}},
-						{Key: "$set", Value: bson.D{{Key: "name", Value: name}}},
-					},
-					options.Update().SetUpsert(true),
-				)
+				actCtx, actCancel := context.WithTimeout(context.Background(), dbTimeout)
+				_, actErr := db.Exec(actCtx, `
+					INSERT INTO play_activity (user_id, app_id, name, date, minutes)
+					VALUES ($1, $2, $3, $4, $5)
+					ON CONFLICT (user_id, app_id, date) DO UPDATE SET
+						minutes = play_activity.minutes + $5,
+						name    = $3
+				`, userID, appID, name, now.Format("2006-01-02"), delta)
 				actCancel()
 				if actErr != nil {
 					log.Printf("scrobble poller: activity upsert error for user %s app %d: %v", userID, appID, actErr)
@@ -886,25 +833,20 @@ func pollUserScrobbles(steamID, userID, key string) {
 			}
 		}
 
-		scrobble := bson.D{
-			{Key: "user_id", Value: userID},
-			{Key: "steam_id", Value: steamID},
-			{Key: "app_id", Value: appID},
-			{Key: "name", Value: name},
-			{Key: "playtime_total", Value: playtimeTotal},
-			{Key: "playtime_recent", Value: playtimeRecent},
-			{Key: "last_polled", Value: now},
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-		_, err := coll.UpdateOne(ctx,
-			bson.D{{Key: "user_id", Value: userID}, {Key: "app_id", Value: appID}},
-			bson.D{{Key: "$set", Value: scrobble}},
-			options.Update().SetUpsert(true),
-		)
-		cancel()
+		scrobCtx, scrobCancel := context.WithTimeout(context.Background(), dbTimeout)
+		_, err := db.Exec(scrobCtx, `
+			INSERT INTO scrobbles (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (user_id, app_id) DO UPDATE SET
+				steam_id        = $2,
+				name            = $4,
+				playtime_total  = $5,
+				playtime_recent = $6,
+				last_polled     = $7
+		`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)
+		scrobCancel()
 		if err != nil {
-			log.Printf("scrobble poller: mongo upsert error for user %s app %d: %v", userID, appID, err)
+			log.Printf("scrobble poller: upsert error for user %s app %d: %v", userID, appID, err)
 		}
 	}
 }
@@ -919,18 +861,27 @@ func pollScrobbles() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cursor, err := mongoClient.Database("Gamium").Collection("steam_links").Find(ctx, bson.D{})
+	rows, err := db.Query(ctx, `SELECT user_id, steam_id FROM steam_links`)
 	if err != nil {
 		log.Println("scrobble poller: failed to fetch steam_links:", err)
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	var links []SteamLink
-	if err = cursor.All(ctx, &links); err != nil {
-		log.Println("scrobble poller: failed to decode steam_links:", err)
+	for rows.Next() {
+		var l SteamLink
+		if err := rows.Scan(&l.UserID, &l.SteamID); err != nil {
+			log.Println("scrobble poller: failed to scan steam_links:", err)
+			return
+		}
+		links = append(links, l)
+	}
+	if err := rows.Err(); err != nil {
+		log.Println("scrobble poller: failed to iterate steam_links:", err)
 		return
 	}
+	rows.Close()
 
 	for _, link := range links {
 		pollUserScrobbles(link.SteamID, link.UserID, key)
@@ -946,64 +897,19 @@ func startScrobblePoller() {
 	}
 }
 
-func mongoURI() string {
-	uri := os.Getenv("MONGODB_URI")
-	if uri == "" {
-		log.Fatal("MONGODB_URI environment variable is required")
-	}
-	return uri
-}
-
 func main() {
 	if os.Getenv("JWT_SECRET") == "" {
 		log.Fatal("JWT_SECRET must be set")
 	}
 
+	ctx := context.Background()
+	initDB(ctx)
+	migrateDB(ctx)
+
 	router := routing.New()
 
-	//
-	// MongoDB
-	//
-
-	clientOptions := options.Client().ApplyURI(mongoURI())
-
-	// Connect to MongoDB
-	client, err := mongo.Connect(context.TODO(), clientOptions)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Check the connection
-	err = client.Ping(context.TODO(), nil)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Connected to MongoDB!")
-
-	mongoClient = client
-
-	// Enforce email uniqueness at the database level so concurrent
-	// registrations cannot create duplicate accounts.
-	idxCtx, idxCancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
-	_, err = client.Database("Gamium").Collection("users").Indexes().CreateOne(idxCtx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "email", Value: 1}},
-		Options: options.Index().SetUnique(true),
-	})
-	idxCancel()
-	if err != nil {
-		log.Fatal("failed to create unique index on users.email: ", err)
-	}
-
-	//
-	// Data
-	//
 	go scrapeSteam(5000)
 	go startScrobblePoller()
-
-	//collection := client.Database("test").Collection("trainers")
 
 	//
 	// API

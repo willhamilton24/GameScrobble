@@ -12,16 +12,14 @@ import (
 	"time"
 
 	routing "github.com/qiangxue/fasthttp-routing"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // XboxLink records an Xbox Live account association.
 type XboxLink struct {
-	UserID   string    `bson:"user_id" json:"user_id"`
-	XUID     string    `bson:"xuid" json:"xuid"`
-	Gamertag string    `bson:"gamertag" json:"gamertag"`
-	LinkedAt time.Time `bson:"linked_at" json:"linked_at"`
+	UserID   string    `json:"user_id"`
+	XUID     string    `json:"xuid"`
+	Gamertag string    `json:"gamertag"`
+	LinkedAt time.Time `json:"linked_at"`
 }
 
 func xboxClientID() string     { return os.Getenv("XBOX_CLIENT_ID") }
@@ -90,14 +88,17 @@ func xboxCallback(c *routing.Context) error {
 		return nil
 	}
 
-	link := XboxLink{UserID: userID, XUID: xuid, Gamertag: gamertag, LinkedAt: time.Now().UTC()}
-	ctx, cancel := context.WithTimeout(context.Background(), mongoUpdateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	if _, err = mongoClient.Database("Gamium").Collection("xbox_links").UpdateOne(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		bson.D{{Key: "$set", Value: link}},
-		options.Update().SetUpsert(true),
-	); err != nil {
+	_, err = db.Exec(ctx, `
+		INSERT INTO xbox_links (user_id, xuid, gamertag, linked_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id) DO UPDATE SET
+			xuid      = $2,
+			gamertag  = $3,
+			linked_at = $4
+	`, userID, xuid, gamertag, time.Now().UTC())
+	if err != nil {
 		c.SetStatusCode(500)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"failed to save Xbox link"}`)

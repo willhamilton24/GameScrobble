@@ -39,7 +39,7 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 - [x] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
 - [x] Deploy config (render.yaml) + scheduled scrobble polling
 - [x] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
-- [ ] Migrate persistence from MongoDB to Neon Postgres via `DATABASE_URL` (shared platform; `MONGODB_URI` is not provisioned, so nothing works in the deployed environment until this ships) — update render.yaml accordingly
+- [x] Migrate persistence from MongoDB to Neon Postgres via `DATABASE_URL` (shared platform; `MONGODB_URI` is not provisioned, so nothing works in the deployed environment until this ships) — update render.yaml accordingly
 - [ ] Run a Stripe test-mode E2E smoke test: signup → checkout → webhook fires → premium unlock → CSV export gated correctly (shared Stripe product/price/webhook already provisioned). Deployment is authorized (deployment switch ON); actual Stripe E2E verification remains pending. The Monkey run for `ebb3fb5` returned an error without verification evidence.
 - [ ] Set platform credentials: `STEAM_API_KEY`, plus Xbox (`XBOX_CLIENT_ID`/`SECRET`), PSN, and Epic OAuth app registrations (operator sign-ups; Steam linking alone is enough to launch)
 - [ ] Verify the Render deploy end-to-end and point the Stripe webhook at the live URL (deployment switch ON; deployment authorized, verification pending)
