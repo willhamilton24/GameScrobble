@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT        NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at  TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_source  TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS steam_links (
     user_id            TEXT    PRIMARY KEY,
     steam_id           TEXT    NOT NULL,

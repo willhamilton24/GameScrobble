@@ -42,10 +42,15 @@ export default function Account() {
     setBusy(true);
     setError('');
     try {
+      const body = { email, password };
+      if (mode === 'register') {
+        const utmSource = new URLSearchParams(window.location.search).get('utm_source');
+        if (utmSource) body.source = utmSource.slice(0, 64);
+      }
       const response = await fetch(`/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify(body)
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to sign in.');

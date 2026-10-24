@@ -1010,6 +1010,11 @@ func main() {
 		return getPublicProfile(c)
 	})
 
+	// Retention metrics (requires ADMIN_KEY query param)
+	router.Get("/api/admin/retention", func(c *routing.Context) error {
+		return getRetentionStats(c)
+	})
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

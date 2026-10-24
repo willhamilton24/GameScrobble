@@ -1,0 +1,31 @@
+SUBREDDIT: r/patientgamers
+FLAIR: Discussion (or Gaming Tools / Resources if available)
+LINK TO USE: https://gameroom.hdynamic.app/?utm_source=reddit_patientgamers
+
+--- TITLE ---
+I built a Last.fm-style game scrobbler that unifies Steam, Xbox, and PSN into one profile — free to use
+
+--- BODY ---
+Hey r/patientgamers,
+
+I'm a patient gamer too and built the tool I always wanted: GameScrobble automatically logs every gaming session from Steam (Xbox and PSN coming), generates a GitHub-style heatmap of your year in games, and gives you a shareable public profile page.
+
+Why it fits this community:
+- It tracks what you actually play, not just what you own — useful if you have a deep backlog and want to see your real habits vs. your "I'll get to it" list
+- The year-in-games view shows which months you actually gamed, at what intensity, across which titles
+- No manual logging — connects to Steam via the official API and polls for new sessions automatically
+
+It's live now at https://gameroom.hdynamic.app (free to sign up). The shareable profile lives at /u/<your-id> — there's a premium tier ($4.99/mo) for full CSV export and deeper stats, but the heatmap and top games are free.
+
+Stack is open (Go backend + React frontend), running on Render + Neon Postgres. I'm actively working on it and would love beta feedback — especially from people with big backlogs who've tried to track their own gaming before.
+
+Happy to answer questions about how it works or what I'm building next.
+
+--- POST NOTES ---
+- Post as text (not a link post) so it appears in the feed naturally
+- Do NOT cross-post this exact text to other subreddits in the same day
+- Reply genuinely to every comment within the first hour to build momentum
+- If r/patientgamers has a "Saturday share" or "self-promotion" thread, use that thread
+  instead of a standalone post to avoid removal for self-promotion
+- Check subreddit rules before posting; r/patientgamers may require minimum account age
+  or karma — post from the hdthronesystem@gmail.com Reddit account (Google sign-in)
