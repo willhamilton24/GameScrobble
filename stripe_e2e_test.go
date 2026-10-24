@@ -1,280 +1,298 @@
 package main
 
-// Stripe test-mode E2E smoke test: signup → checkout webhook → premium unlock → CSV export gated.
+// TestStripeE2E requires a separate browser step: complete the application's
+// hosted test Checkout while this test polls. The Go command alone is not E2E.
+// Supply STRIPE_SECRET_KEY through the environment, then run:
+// RUN_STRIPE_E2E=1 go test -run '^TestStripeE2E$' -v -count=1 -timeout 15m
+// The checkout URL is written to a temporary private file, never diagnostics.
 //
-// Requires the stripe CLI in PATH and:
-//   RUN_STRIPE_E2E=1            — opt-in guard (prevents accidental runs in CI)
-//   STRIPE_SECRET_KEY=sk_test_… — Stripe test-mode secret key
-//
-// Optional:
-//   APP_BASE_URL=https://…      — defaults to https://gameroom.hdynamic.app
-//
-// Usage:
-//   RUN_STRIPE_E2E=1 STRIPE_SECRET_KEY=sk_test_... go test -run TestStripeE2E -v -timeout 120s
-//
-// Verified 2026-10-24 against gameroom.hdynamic.app:
-//   signup → 402 gate confirmed
-//   stripe trigger checkout.session.completed (evt_1UTwL7GRjKD6n9dm9XhYncPm) delivered to webhook
-//   export HTTP 200, content-type text/csv, content-disposition attachment after activation
-//   trial subscription (sub_1UTwN8GRjKD6n9dmw1X17lx5) cancelled; customer.subscription.deleted fired
-//   export re-gated to 402
+// Monkey's reported deployed application-flow verification (2026-10-24):
+// session cs_test_a1zwCaEuIPcO1ZATHRfg0Nkn4869FAMmp7fm7BxtNMcwICPYHqRFO4p5bM,
+// checkout event evt_1UTwetGRjKD6n9dm6QH90A4p,
+// subscription sub_1UTwesGRjKD6n9dmuswB4Tgq,
+// cancellation event evt_1UTwfiGRjKD6n9dmfSdPdoHy.
+// This historical evidence is not an execution of this revised test; see README.
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	stripe "github.com/stripe/stripe-go/v76"
 )
 
-// TestStripeE2E exercises the full Stripe subscription lifecycle against the
-// live deployment, using real Stripe test-mode events delivered to the
-// registered webhook endpoint. The in-process TestStripeSmoke covers the
-// same logic without network I/O; this test adds actual Stripe delivery.
+const e2eAppURL = "https://gameroom.hdynamic.app"
+const e2ePriceID = "price_1USUwuGRjKD6n9dmujp5uGyk"
+const e2eWebhookID = "we_1USUwxGRjKD6n9dmwTvgZ6iJ"
+
 func TestStripeE2E(t *testing.T) {
 	if os.Getenv("RUN_STRIPE_E2E") != "1" {
 		t.Skip("set RUN_STRIPE_E2E=1 to run the live Stripe E2E test")
 	}
-	stripeKey := os.Getenv("STRIPE_SECRET_KEY")
-	if !strings.HasPrefix(stripeKey, "sk_test_") {
-		t.Skip("STRIPE_SECRET_KEY must be a test-mode key (sk_test_...)")
+	key := os.Getenv("STRIPE_SECRET_KEY")
+	if !strings.HasPrefix(key, "sk_test_") {
+		t.Fatal("STRIPE_SECRET_KEY must be a test-mode secret key")
 	}
-	if _, err := exec.LookPath("stripe"); err != nil {
-		t.Skip("stripe CLI not in PATH")
+	if base := os.Getenv("APP_BASE_URL"); base != "" && strings.TrimRight(base, "/") != e2eAppURL {
+		t.Fatal("APP_BASE_URL must be https://gameroom.hdynamic.app")
 	}
-
-	appURL := os.Getenv("APP_BASE_URL")
-	if appURL == "" {
-		appURL = "https://gameroom.hdynamic.app"
+	started := time.Now().Add(-time.Minute).Unix()
+	ctx, cancel := context.WithTimeout(context.Background(), 13*time.Minute)
+	defer cancel()
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// No subprocesses: credentials stay in HTTP authorization headers, and raw
+	// response bodies/transport errors (which may contain credentials) are not logged.
+	stripeRequest := func(method, path string, dst any) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, method, "https://api.stripe.com/v1/"+path, nil)
+		if err != nil {
+			t.Fatal("could not construct Stripe request")
+		}
+		req.SetBasicAuth(key, "")
+		req.Header.Set("Stripe-Version", "2023-10-16")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal("Stripe request failed or timed out (details suppressed)")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Stripe request returned HTTP %d", resp.StatusCode)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+			t.Fatal("invalid Stripe JSON response")
+		}
 	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	// -------------------------------------------------------------------
-	// 1. Register a unique test user.
-	// -------------------------------------------------------------------
-	email := fmt.Sprintf("e2e-%d@example.com", time.Now().UnixNano())
-	regBody, _ := json.Marshal(map[string]string{"email": email, "password": "E2ETestPass123!"})
-	resp, err := client.Post(appURL+"/auth/register", "application/json", bytes.NewReader(regBody))
-	if err != nil {
-		t.Fatalf("register: %v", err)
+	// Ensure our destination is subscribed before relying on pending_webhooks.
+	var endpoint stripe.WebhookEndpoint
+	stripeRequest(http.MethodGet, "webhook_endpoints/"+e2eWebhookID, &endpoint)
+	if endpoint.Livemode || endpoint.Status != "enabled" || endpoint.URL != e2eAppURL+"/api/stripe/webhook" {
+		t.Fatal("expected enabled test-mode application webhook endpoint")
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("register returned %d: %s", resp.StatusCode, body)
+	for _, required := range []string{"checkout.session.completed", "customer.subscription.deleted"} {
+		found := false
+		for _, enabled := range endpoint.EnabledEvents {
+			if enabled == "*" || enabled == required {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("webhook is not subscribed to %s", required)
+		}
+	}
+	appPost := func(path string, data any, dst any) {
+		t.Helper()
+		body, err := json.Marshal(data)
+		if err != nil {
+			t.Fatal("could not encode application request")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, e2eAppURL+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal("could not construct application request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal("application request failed or timed out (details suppressed)")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("application request returned HTTP %d", resp.StatusCode)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+			t.Fatal("invalid application JSON response")
+		}
+	}
+	var random [24]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		t.Fatal("could not generate signup password")
 	}
 	var reg struct {
 		User struct {
 			ID string `json:"id"`
 		} `json:"user"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil || reg.User.ID == "" {
-		t.Fatal("could not decode user ID from register response")
+	appPost("/auth/register", map[string]string{"email": fmt.Sprintf("e2e-%d@example.com", time.Now().UnixNano()), "password": hex.EncodeToString(random[:])}, &reg)
+	if reg.User.ID == "" {
+		t.Fatal("registration returned no user ID")
 	}
 	userID := reg.User.ID
-	t.Logf("registered test user: %s (%s)", userID, email)
-
-	// -------------------------------------------------------------------
-	// 2. Verify export is gated before activation.
-	// -------------------------------------------------------------------
-	t.Run("export_gated_before_checkout", func(t *testing.T) {
-		resp, err := client.Get(appURL + "/u/export?user_id=" + userID)
+	t.Logf("registered user %s", userID)
+	export := func() (int, http.Header, []byte) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e2eAppURL+"/u/export?user_id="+url.QueryEscape(userID), nil)
 		if err != nil {
-			t.Fatalf("export request: %v", err)
+			t.Fatal("could not construct export request")
 		}
-		resp.Body.Close()
-		if resp.StatusCode != 402 {
-			t.Fatalf("expected 402 for non-premium user, got %d", resp.StatusCode)
-		}
-	})
-
-	// -------------------------------------------------------------------
-	// 3. Trigger checkout.session.completed via the Stripe CLI, delivering
-	//    the event to the registered webhook at APP_BASE_URL.
-	// -------------------------------------------------------------------
-	t.Run("checkout_webhook_delivered", func(t *testing.T) {
-		cmd := exec.Command("stripe",
-			"--api-key", stripeKey,
-			"trigger", "checkout.session.completed",
-			"--override", "checkout_session:metadata[user_id]="+userID,
-		)
-		out, err := cmd.CombinedOutput()
+		resp, err := client.Do(req)
 		if err != nil {
-			t.Fatalf("stripe trigger failed: %v\n%s", err, out)
-		}
-		if !strings.Contains(string(out), "Trigger succeeded") {
-			t.Fatalf("unexpected trigger output: %s", out)
-		}
-		t.Logf("trigger output: %s", strings.TrimSpace(string(out)))
-	})
-
-	// -------------------------------------------------------------------
-	// 4. Poll for premium activation (up to 30 s).
-	// -------------------------------------------------------------------
-	t.Run("premium_activated_after_checkout", func(t *testing.T) {
-		deadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			resp, err := client.Get(appURL + "/u/export?user_id=" + userID)
-			if err != nil {
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				return
-			}
-			time.Sleep(2 * time.Second)
-		}
-		t.Fatal("premium not activated within 30s after checkout.session.completed webhook")
-	})
-
-	// -------------------------------------------------------------------
-	// 5. Verify CSV format.
-	// -------------------------------------------------------------------
-	t.Run("csv_export_format", func(t *testing.T) {
-		resp, err := client.Get(appURL + "/u/export?user_id=" + userID)
-		if err != nil {
-			t.Fatalf("export: %v", err)
+			t.Fatal("export request failed or timed out (details suppressed)")
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != 200 {
-			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal("could not read export response")
 		}
-		if ct := resp.Header.Get("Content-Type"); ct != "text/csv" {
-			t.Fatalf("expected text/csv, got %q", ct)
-		}
-		if cd := resp.Header.Get("Content-Disposition"); cd != `attachment; filename="gamescrobble_history.csv"` {
-			t.Fatalf("unexpected Content-Disposition: %q", cd)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		if !strings.HasPrefix(string(body), "app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n") {
-			t.Fatalf("unexpected CSV header: %q", string(body))
-		}
-		t.Logf("CSV export OK (%d bytes)", len(body))
-	})
-
-	// -------------------------------------------------------------------
-	// 6. Re-trigger checkout with a customer ID, then create a trial
-	//    subscription for that customer, and cancel it. The resulting
-	//    customer.subscription.deleted webhook should revoke premium.
-	// -------------------------------------------------------------------
-	priceID := os.Getenv("STRIPE_PREMIUM_PRICE_ID")
-	if priceID == "" {
-		priceID = "price_1USUwuGRjKD6n9dmujp5uGyk"
+		return resp.StatusCode, resp.Header, body
 	}
-	customerID := e2eCreateCustomer(t, appURL, stripeKey, userID)
-	if customerID != "" {
-		// Link the customer ID to this user via a second checkout event.
-		cmd := exec.Command("stripe",
-			"--api-key", stripeKey,
-			"trigger", "checkout.session.completed",
-			"--override", "checkout_session:metadata[user_id]="+userID,
-			"--override", "checkout_session:customer="+customerID,
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Logf("re-trigger (customer link) failed: %v\n%s", err, out)
-		} else {
-			time.Sleep(3 * time.Second)
-		}
-
-		subID := e2eCreateTrialSub(t, stripeKey, customerID, priceID, userID)
-		if subID != "" {
-			e2eCancelSub(t, stripeKey, subID)
-		}
+	if status, _, _ := export(); status != 402 {
+		t.Fatalf("before checkout: expected 402, got %d", status)
 	}
-
-	// -------------------------------------------------------------------
-	// 7. Verify export re-gated after cancellation.
-	// -------------------------------------------------------------------
-	t.Run("export_gated_after_cancellation", func(t *testing.T) {
-		if customerID == "" {
-			t.Skip("no customer created; skipping cancellation gate check")
+	var checkout struct {
+		URL string `json:"url"`
+	}
+	appPost("/api/stripe/checkout", map[string]string{"user_id": userID}, &checkout)
+	hosted, err := url.Parse(checkout.URL)
+	if err != nil || hosted.Scheme != "https" || hosted.Host != "checkout.stripe.com" || hosted.User != nil {
+		t.Fatal("application returned an invalid hosted Checkout URL")
+	}
+	sessionID := strings.TrimPrefix(hosted.Path, "/c/pay/")
+	if !strings.HasPrefix(sessionID, "cs_test_") || strings.Contains(sessionID, "/") {
+		t.Fatal("expected test Checkout session URL")
+	}
+	var sess stripe.CheckoutSession
+	retrieveSession := func() {
+		stripeRequest(http.MethodGet, "checkout/sessions/"+url.PathEscape(sessionID)+"?expand[]=line_items", &sess)
+		if sess.ID != sessionID || sess.Livemode || sess.Mode != stripe.CheckoutSessionModeSubscription || sess.Metadata["user_id"] != userID {
+			t.Fatal("Checkout session mode or application user association mismatch")
 		}
-		deadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			resp, err := client.Get(appURL + "/u/export?user_id=" + userID)
-			if err != nil {
-				time.Sleep(2 * time.Second)
-				continue
+		for _, target := range []string{sess.SuccessURL, sess.CancelURL} {
+			u, err := url.Parse(target)
+			if err != nil || u.Scheme != "https" || u.Host != "gameroom.hdynamic.app" || u.User != nil {
+				t.Fatal("Checkout return URL must use gameroom.hdynamic.app")
 			}
-			resp.Body.Close()
-			if resp.StatusCode == 402 {
-				t.Log("export correctly re-gated to 402 after cancellation")
+		}
+		if sess.LineItems == nil || sess.LineItems.HasMore || len(sess.LineItems.Data) != 1 || sess.LineItems.Data[0].Price == nil || sess.LineItems.Data[0].Price.ID != e2ePriceID || sess.LineItems.Data[0].Quantity != 1 {
+			t.Fatal("Checkout does not contain the provisioned premium price at quantity 1")
+		}
+	}
+	retrieveSession()
+	file, err := os.CreateTemp("", "gamescrobble-checkout-*.txt")
+	if err != nil {
+		t.Fatal("could not create private Checkout URL file")
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(checkout.URL + "\n"); err != nil {
+		file.Close()
+		t.Fatal("could not write Checkout URL")
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal("could not close Checkout URL file")
+	}
+	t.Logf("session %s verified; complete hosted test Checkout in a browser using the URL in %s within 10 minutes", sessionID, file.Name())
+	poll := func(timeout time.Duration, label string, check func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for {
+			if check() {
 				return
 			}
-			time.Sleep(2 * time.Second)
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", label)
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("overall timeout waiting for %s", label)
+			case <-time.After(2 * time.Second):
+			}
 		}
-		t.Fatal("export still 200 after subscription cancellation — premium not revoked")
+	}
+	poll(10*time.Minute, "browser Checkout completion", func() bool {
+		retrieveSession()
+		if sess.Status == stripe.CheckoutSessionStatusExpired {
+			t.Fatal("Checkout session expired")
+		}
+		return sess.Status == stripe.CheckoutSessionStatusComplete && sess.PaymentStatus == stripe.CheckoutSessionPaymentStatusPaid
 	})
-}
-
-// e2eCreateCustomer creates a Stripe test customer linked to the given user.
-func e2eCreateCustomer(t *testing.T, _ string, apiKey, userID string) string {
-	t.Helper()
-	cmd := exec.Command("stripe", "--api-key", apiKey,
-		"customers", "create",
-		"--metadata", "user_id="+userID,
-		"--metadata", "test=e2e_smoke",
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Logf("create customer: %v", err)
-		return ""
+	if sess.Subscription == nil || sess.Subscription.ID == "" || sess.Customer == nil || sess.Customer.ID == "" {
+		t.Fatal("completed Checkout missing subscription or customer")
 	}
-	var obj struct {
-		ID string `json:"id"`
+	subID := sess.Subscription.ID
+	t.Logf("completed Checkout subscription %s; if this run fails, cancel this test subscription manually", subID)
+	var sub stripe.Subscription
+	stripeRequest(http.MethodGet, "subscriptions/"+url.PathEscape(subID), &sub)
+	if sub.Livemode || sub.Customer == nil || sub.Customer.ID != sess.Customer.ID || sub.Metadata["user_id"] != userID || sub.Status != stripe.SubscriptionStatusActive {
+		t.Fatal("completed Checkout subscription association/status mismatch")
 	}
-	if err := json.Unmarshal(out, &obj); err != nil || obj.ID == "" {
-		t.Logf("parse customer: %v (%s)", err, out)
-		return ""
+	// pending_webhooks is account-wide, not an endpoint delivery log. Require
+	// the configured destination above, the matching real event with no pending
+	// deliveries, and the application's resulting gating transition below.
+	waitEvent := func(kind, objectID string) {
+		t.Helper()
+		poll(60*time.Second, kind+" delivery", func() bool {
+			after := ""
+			for {
+				var events stripe.EventList
+				path := "events?type=" + url.QueryEscape(kind) + fmt.Sprintf("&limit=100&created[gte]=%d", started)
+				if after != "" {
+					path += "&starting_after=" + url.QueryEscape(after)
+				}
+				stripeRequest(http.MethodGet, path, &events)
+				for _, event := range events.Data {
+					var object struct {
+						ID string `json:"id"`
+					}
+					if event.Data == nil || json.Unmarshal(event.Data.Raw, &object) != nil {
+						t.Fatal("invalid Stripe event data")
+					}
+					if object.ID == objectID {
+						if event.Livemode {
+							t.Fatal("unexpected live-mode event")
+						}
+						if event.PendingWebhooks != 0 {
+							return false
+						}
+						t.Logf("%s: %s has no pending webhook deliveries", kind, event.ID)
+						return true
+					}
+				}
+				if !events.HasMore {
+					return false
+				}
+				if len(events.Data) == 0 {
+					t.Fatal("invalid Stripe event pagination")
+				}
+				after = events.Data[len(events.Data)-1].ID
+			}
+		})
 	}
-	t.Logf("created customer: %s", obj.ID)
-	return obj.ID
-}
-
-// e2eCreateTrialSub creates a 7-day trial subscription; no payment method needed.
-func e2eCreateTrialSub(t *testing.T, apiKey, customerID, priceID, userID string) string {
-	t.Helper()
-	cmd := exec.Command("stripe", "--api-key", apiKey,
-		"subscriptions", "create",
-		"--customer", customerID,
-		"--items[0][price]", priceID,
-		"--trial-period-days", "7",
-		"--metadata", "user_id="+userID,
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Logf("create trial sub: %v", err)
-		return ""
+	waitEvent("checkout.session.completed", sessionID)
+	poll(30*time.Second, "premium CSV export", func() bool {
+		status, headers, body := export()
+		if status == 402 {
+			return false
+		}
+		if status != 200 {
+			t.Fatalf("premium export returned %d", status)
+		}
+		if headers.Get("Content-Type") != "text/csv" || headers.Get("Content-Disposition") != `attachment; filename="gamescrobble_history.csv"` || !bytes.HasPrefix(body, []byte("app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n")) {
+			t.Fatal("invalid CSV export headers or contents")
+		}
+		return true
+	})
+	stripeRequest(http.MethodDelete, "subscriptions/"+url.PathEscape(subID), &sub)
+	if sub.ID != subID || sub.Status != stripe.SubscriptionStatusCanceled {
+		t.Fatal("Checkout subscription cancellation not confirmed")
 	}
-	var obj struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(out, &obj); err != nil || obj.ID == "" {
-		t.Logf("parse sub: %v", err)
-		return ""
-	}
-	t.Logf("created trial subscription: %s", obj.ID)
-	return obj.ID
-}
-
-// e2eCancelSub cancels the subscription immediately.
-func e2eCancelSub(t *testing.T, apiKey, subID string) {
-	t.Helper()
-	cmd := exec.Command("stripe", "--api-key", apiKey,
-		"subscriptions", "cancel", subID,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("cancel sub: %v\n%s", err, out)
-		return
-	}
-	t.Logf("cancelled subscription: %s", subID)
-	time.Sleep(8 * time.Second) // allow webhook delivery
+	waitEvent("customer.subscription.deleted", subID)
+	poll(30*time.Second, "restored 402 gating", func() bool {
+		status, _, _ := export()
+		if status == 200 {
+			return false
+		}
+		if status != 402 {
+			t.Fatalf("after cancellation: expected 402, got %d", status)
+		}
+		return true
+	})
+	t.Log("application Checkout, delivery, premium CSV export, cancellation, and restored 402 gating verified")
 }
