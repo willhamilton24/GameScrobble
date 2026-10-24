@@ -281,7 +281,7 @@ func TestStripeSmoke(t *testing.T) {
 		if got := string(ctx.Response.Header.ContentType()); got != "text/csv" {
 			t.Fatalf("unexpected Content-Type: %q", got)
 		}
-		if got := string(ctx.Response.Header.Peek("Content-Disposition")); got != `attachment; filename="gamescrobble_history.csv"` {
+		if got := string(ctx.Response.Header.Peek("Content-Disposition")); got != `attachment; filename="gameroom_history.csv"` {
 			t.Fatalf("unexpected Content-Disposition: %q", got)
 		}
 		wantCSV := "app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n" +

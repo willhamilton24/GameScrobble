@@ -35,7 +35,7 @@ yarn-error.log*
 
 # Compiled Go binaries
 db/main
-/gamescrobble
+/gameroom
 /server
 *.exe
 

@@ -176,7 +176,7 @@ func TestStripeE2E(t *testing.T) {
 		}
 	}
 	retrieveSession()
-	file, err := os.CreateTemp("", "gamescrobble-checkout-*.txt")
+	file, err := os.CreateTemp("", "gameroom-checkout-*.txt")
 	if err != nil {
 		t.Fatal("could not create private Checkout URL file")
 	}
@@ -274,7 +274,7 @@ func TestStripeE2E(t *testing.T) {
 		if status != 200 {
 			t.Fatalf("premium export returned %d", status)
 		}
-		if headers.Get("Content-Type") != "text/csv" || headers.Get("Content-Disposition") != `attachment; filename="gamescrobble_history.csv"` || !bytes.HasPrefix(body, []byte("app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n")) {
+		if headers.Get("Content-Type") != "text/csv" || headers.Get("Content-Disposition") != `attachment; filename="gameroom_history.csv"` || !bytes.HasPrefix(body, []byte("app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n")) {
 			t.Fatal("invalid CSV export headers or contents")
 		}
 		return true
