@@ -40,12 +40,26 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 - [x] Deploy config (render.yaml) + scheduled scrobble polling
 - [x] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
 - [x] Migrate persistence from MongoDB to Neon Postgres via `DATABASE_URL` (shared platform; `MONGODB_URI` is not provisioned, so nothing works in the deployed environment until this ships) — update render.yaml accordingly
-- [ ] Run a Stripe test-mode E2E smoke test: signup → checkout → webhook fires → premium unlock → CSV export gated correctly (shared Stripe product/price/webhook already provisioned). Deployment is authorized; actual Stripe E2E verification remains pending. Mark complete only when actual verification evidence is recorded.
+- [x] Complete Stripe test-mode E2E verification of signup → application Checkout → webhook → premium CSV export → cancellation gating. Monkey successfully verified deployed head `7606188` on 2026-10-24 at `https://gameroom.hdynamic.app`: signup, application Checkout session `cs_test_a19vxivBRuRlzuLEPlGhrcdzDygKIxgEwKbqBRFLerwGxMqyWY1NSl61j3`, webhook delivery, premium unlock with CSV export returning HTTP 200 and correct headers (`Content-Type: text/csv` and `Content-Disposition: attachment; filename="gamescrobble_history.csv"`), cancellation of subscription `sub_1UTxCgGRjKD6n9dmD6IDQi4R`, and restored HTTP 402 export gating. This records Monkey's verification of the deployed application flow; it is not evidence that the revised `TestStripeE2E` ran. Execution of that Go test remains unverified.
 - [ ] Set platform credentials: `STEAM_API_KEY`, plus Xbox (`XBOX_CLIENT_ID`/`SECRET`), PSN, and Epic OAuth app registrations (operator sign-ups; Steam linking alone is enough to launch)
 - [ ] Verify the Render deploy end-to-end and point the Stripe webhook at the live URL (`https://gameroom.hdynamic.app`). Deployment is authorized; frontend, UI authentication persistence, and Stripe delivery/application processing must all have actual verification evidence before completion. See the verification record below. Mark complete only when actual verification evidence is recorded.
 - [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention (waits on the deployment switch)
 
 The local `TestStripeSmoke` test provides in-process webhook/gating coverage using signed synthetic events, in-memory premium state, and deterministic export data. It verifies premium activation, invoice expiration extension, successful CSV export, and 402 gating before activation and after cancellation. It does not exercise signup, checkout creation, or delivery by Stripe.
+
+The revised `TestStripeE2E` (`stripe_e2e_test.go`) registers a new application user, checks the initial 402 gate, and calls `/api/stripe/checkout`. It retrieves that session from Stripe and requires test mode, the registered user's metadata, the provisioned price `price_1USUwuGRjKD6n9dmujp5uGyk`, and return URLs on `gameroom.hdynamic.app`.
+
+To run it, provide the platform's existing test-mode `STRIPE_SECRET_KEY` securely through the environment (do not place credentials in command arguments or logs), then run:
+
+```sh
+RUN_STRIPE_E2E=1 go test -run '^TestStripeE2E$' -v -count=1 -timeout 15m
+```
+
+**A separate browser step is required.** While the command runs, open the hosted Checkout URL from the private temporary file named in the test output and complete test-mode Checkout within ten minutes. The Go command alone does not complete E2E. The URL file is removed when the test ends. No Stripe CLI, synthetic checkout trigger, separate customer, or trial subscription is used.
+
+After actual paid Checkout completion, the test requires a matching `checkout.session.completed` event with no pending webhook deliveries before checking premium CSV access. It verifies the provisioned application webhook is enabled and subscribed; Stripe's pending-delivery count is account-wide, not a per-endpoint delivery receipt, so the test also requires the application's resulting gating transitions. It then cancels only the subscription belonging to that Checkout, waits for its `customer.subscription.deleted` event to have no pending deliveries, and requires restored 402 gating. The revised test asserts exact CSV response headers and the CSV column header. Monkey's verification above independently confirms HTTP 200 and correct CSV response headers; it does not establish execution of these Go assertions.
+
+Once opted in, missing prerequisites, request/response errors, and timeouts fail the test and stop dependent stages. HTTP requests and the overall run are bounded; there are no subprocesses or credential-bearing diagnostic dumps. If a run fails after payment but before cancellation, use the logged subscription ID to cancel that test subscription. Normal `go test ./...` skips this interactive live test; passing local tests does not count as executing it.
 
 ### Deployment verification record (UTC)
 
