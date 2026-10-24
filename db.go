@@ -68,7 +68,25 @@ CREATE TABLE IF NOT EXISTS epic_links (
     display_name TEXT        NOT NULL DEFAULT '',
     linked_at    TIMESTAMPTZ NOT NULL
 );
-CREATE TABLE IF NOT EXISTS scrobbles (
+-- Identify the previous play-history table by its complete column signature so
+-- existing installations retain their data when adopting the new table name.
+DO $$
+DECLARE
+    previous_table TEXT;
+BEGIN
+    IF to_regclass('public.play_history') IS NULL THEN
+        SELECT table_name INTO STRICT previous_table
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        GROUP BY table_name
+        HAVING array_agg(column_name::text ORDER BY column_name) =
+            ARRAY['app_id', 'last_polled', 'name', 'playtime_recent', 'playtime_total', 'steam_id', 'user_id'];
+        EXECUTE format('ALTER TABLE public.%I RENAME TO play_history', previous_table);
+    END IF;
+EXCEPTION
+    WHEN no_data_found THEN NULL; -- Fresh installations create the table below.
+END $$;
+CREATE TABLE IF NOT EXISTS play_history (
     user_id         TEXT        NOT NULL,
     steam_id        TEXT        NOT NULL DEFAULT '',
     app_id          INTEGER     NOT NULL,
