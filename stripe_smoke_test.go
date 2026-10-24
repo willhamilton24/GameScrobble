@@ -135,7 +135,7 @@ func checkoutCompletedEvent(userID, customerID string) []byte {
 		"id":          "evt_smoke_co",
 		"object":      "event",
 		"type":        "checkout.session.completed",
-		"api_version": "2023-10-16",
+		"api_version": "2026-09-30.endive",
 		"created":     time.Now().Unix(),
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
@@ -154,7 +154,7 @@ func invoicePaymentSucceededEvent(customerID, userID string, periodEnd time.Time
 		"id":          "evt_smoke_inv",
 		"object":      "event",
 		"type":        "invoice.payment_succeeded",
-		"api_version": "2023-10-16",
+		"api_version": "2026-09-30.endive",
 		"created":     time.Now().Unix(),
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
@@ -162,8 +162,11 @@ func invoicePaymentSucceededEvent(customerID, userID string, periodEnd time.Time
 				"object":     "invoice",
 				"customer":   customerID,
 				"period_end": periodEnd.Unix(),
-				"subscription_details": map[string]interface{}{
-					"metadata": map[string]string{"user_id": userID},
+				"parent": map[string]interface{}{
+					"type": "subscription_details",
+					"subscription_details": map[string]interface{}{
+						"metadata": map[string]string{"user_id": userID},
+					},
 				},
 				"lines": map[string]interface{}{
 					"object": "list",
@@ -180,7 +183,7 @@ func subscriptionDeletedEvent(customerID string) []byte {
 		"id":          "evt_smoke_del",
 		"object":      "event",
 		"type":        "customer.subscription.deleted",
-		"api_version": "2023-10-16",
+		"api_version": "2026-09-30.endive",
 		"created":     time.Now().Unix(),
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
@@ -310,4 +313,73 @@ func TestStripeSmoke(t *testing.T) {
 			t.Fatalf("expected 402 after cancellation, got %d", ctx.Response.StatusCode())
 		}
 	})
+}
+
+func TestStripeRejectsInvalidSignaturesAndVersions(t *testing.T) {
+	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
+	payload := checkoutCompletedEvent(smokeUserID, smokeCustomerID)
+	for name, sig := range map[string]string{
+		"missing":      "",
+		"wrong secret": signStripePayload(payload, "wrong-test-secret", time.Now()),
+		"expired":      signStripePayload(payload, smokeWebhookSecret, time.Now().Add(-10*time.Minute)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := doWebhookReq(payload, sig).Response.StatusCode(); got != 400 {
+				t.Fatalf("got %d, want 400", got)
+			}
+		})
+	}
+	var event map[string]interface{}
+	json.Unmarshal(payload, &event)
+	event["api_version"] = "2023-10-16"
+	payload, _ = json.Marshal(event)
+	if got := doWebhookReq(payload, signStripePayload(payload, smokeWebhookSecret, time.Now())).Response.StatusCode(); got != 400 {
+		t.Fatalf("incompatible version: got %d, want 400", got)
+	}
+}
+
+func TestStripeInvoiceBeforeCheckoutUsesParentMetadata(t *testing.T) {
+	store := newMemPremiumStore()
+	previous := premiums
+	premiums = store
+	t.Cleanup(func() { premiums = previous })
+	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
+	end := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second)
+	payload := invoicePaymentSucceededEvent(smokeCustomerID, smokeUserID, end)
+	ctx := doWebhookReq(payload, signStripePayload(payload, smokeWebhookSecret, time.Now()))
+	if ctx.Response.StatusCode() != 200 {
+		t.Fatalf("invoice failed: %s", ctx.Response.Body())
+	}
+	if got := store.records[smokeUserID]; !got.Equal(end.Add(72 * time.Hour)) {
+		t.Fatalf("parent metadata not applied: got %v", got)
+	}
+}
+
+type failingPremiumStore struct{ *memPremiumStore }
+
+func (failingPremiumStore) activate(string, string) error {
+	return fmt.Errorf("test database unavailable")
+}
+func (failingPremiumStore) extend(string, string, time.Time) error {
+	return fmt.Errorf("test database unavailable")
+}
+func (failingPremiumStore) deactivateByCustomer(string) error {
+	return fmt.Errorf("test database unavailable")
+}
+
+func TestStripeRetriesPersistenceFailures(t *testing.T) {
+	previous := premiums
+	premiums = failingPremiumStore{newMemPremiumStore()}
+	t.Cleanup(func() { premiums = previous })
+	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
+	for _, payload := range [][]byte{
+		checkoutCompletedEvent(smokeUserID, smokeCustomerID),
+		invoicePaymentSucceededEvent(smokeCustomerID, smokeUserID, time.Now().Add(30*24*time.Hour)),
+		subscriptionDeletedEvent(smokeCustomerID),
+	} {
+		ctx := doWebhookReq(payload, signStripePayload(payload, smokeWebhookSecret, time.Now()))
+		if ctx.Response.StatusCode() != 500 {
+			t.Fatalf("got %d, want retryable 500", ctx.Response.StatusCode())
+		}
+	}
 }
