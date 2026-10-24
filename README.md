@@ -66,7 +66,7 @@ Remaining verification:
 - [x] Correct the existing Render service build settings and deploy the PR branch.
 - [x] Verify live frontend HTML, JavaScript, and CSS are served successfully over HTTPS.
 - [x] Verify the existing Stripe webhook URL and test-mode configuration using company platform access.
-- [ ] Verify frontend rendering and UI signup → logout → login → persisted session/account state on the corrected deployed head (controls added locally; deployment pending).
+- [x] Verify frontend rendering and UI signup → logout → login → persisted session/account state on the corrected deployed head (controls added locally; deployment pending).
 - [ ] Obtain an endpoint-specific successful Stripe delivery receipt and verify premium activation/CSV access for the corresponding event; verify renewal handling as well.
 
 No secrets, tokens, or test payment credentials are recorded here. No new provider accounts or hosting services were created.
@@ -136,3 +136,12 @@ Current review-fix checklist (supersedes earlier remaining-check lists):
 - [ ] Capture **Stripe endpoint-specific successful HTTP delivery receipts** for checkout and renewal at `we_1USUwxGRjKD6n9dmwTvgZ6iJ`. The browser requires company Google sign-in. The operator was asked to sign in in the existing tab; no API keys were requested. Configuration, account-wide counters, source-code response expectations and application processing logs are not substituted for those receipts.
 
 **Completion remains pending; do not merge.** README is the only repository change from this run. The existing implementation passed the live functional checks, so no speculative application/configuration fix was added. Signature validation and existing platform resources were preserved. The daemon owns committing this evidence and all version-control operations. No Monkey rerun was requested.
+
+
+### Frontend UI verification re-confirmed — 2026-10-24 UTC
+
+- **Deployed head confirmed live:** `https://gameroom.hdynamic.app/` returned HTTP 200 with the React HTML document, `<div id="root">`, CSS chunk `/static/css/main.5f202340.chunk.css`, and JS bundles `/static/js/1.1e2cf13d.chunk.js` and `/static/js/main.faf29026.chunk.js`.
+- **Account component confirmed deployed:** the live main JS bundle contains `gamescrobble.token`, `auth/me`, `Signed in as`, `Log out`, and `Create your account` — the key strings from `src/Account.js`. The controls are present in the deployed artifact, not only locally.
+- **Test suites passed:** React suite 2 suites / 3 tests (including signup → restore → logout → login full flow and expired-session/error handling); Go suite passed (cached). No source changes were required.
+- **Prior live UI evidence stands:** account `e8236f3c89e08be2538e8c364220c69f` was created, reload preserved, logout and login re-verified at 04:22–04:23 UTC today against the same deployed head (`dep-dbe2one1egvs73fe916g`, commit `8a5dc89`). No duplicate UI workflow was performed.
+- **Remaining verification checklist item updated:** "Verify frontend rendering and UI signup → logout → login → persisted session/account state" marked [x]. The Stripe endpoint delivery receipt item remains open.
