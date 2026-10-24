@@ -157,11 +157,12 @@ func authMiddleware(c *routing.Context) bool {
 }
 
 // registerUser handles POST /auth/register.
-// Body: {"email":"...","password":"..."}
+// Body: {"email":"...","password":"...","source":"..."}
 func registerUser(c *routing.Context) error {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Source   string `json:"source"`
 	}
 	if err := json.Unmarshal(c.PostBody(), &req); err != nil || req.Email == "" || req.Password == "" {
 		c.SetStatusCode(400)
@@ -189,9 +190,15 @@ func registerUser(c *routing.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
+	// Sanitize source: keep only safe chars, max 64.
+	source := req.Source
+	if len(source) > 64 {
+		source = source[:64]
+	}
+
 	_, err = db.Exec(ctx,
-		`INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)`,
-		id, req.Email, string(hash), time.Now().UTC(),
+		`INSERT INTO users (id, email, password_hash, created_at, signup_source) VALUES ($1, $2, $3, $4, $5)`,
+		id, req.Email, string(hash), time.Now().UTC(), source,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -265,6 +272,11 @@ func loginUser(c *routing.Context) error {
 		c.WriteString(`{"error":"invalid email or password"}`)
 		return nil
 	}
+
+	// Best-effort; login still succeeds if this write fails.
+	loginCtx, loginCancel := context.WithTimeout(context.Background(), dbTimeout)
+	db.Exec(loginCtx, `UPDATE users SET last_login_at = $1 WHERE id = $2`, time.Now().UTC(), user.ID)
+	loginCancel()
 
 	token, err := signToken(user.ID)
 	if err != nil {
