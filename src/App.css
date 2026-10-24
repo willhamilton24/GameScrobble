@@ -40,3 +40,13 @@ p {
   letter-spacing: 0.1em;
   color: #475569;
 }
+
+.account { margin-top: 2rem; padding: 1.5rem; border: 1px solid #334155; border-radius: 12px; }
+.account fieldset { border: 0; padding: 0; display: grid; gap: 0.75rem; text-align: left; }
+.account input, .account button { box-sizing: border-box; font: inherit; padding: 0.65rem; border-radius: 6px; }
+.account input { width: 100%; border: 1px solid #64748b; background: #111827; color: #fff; }
+.account button { margin: 0.25rem; border: 1px solid #00d4ff; background: #182335; color: #e2e8f0; cursor: pointer; }
+.account button:disabled { opacity: 0.6; cursor: wait; }
+.account a { color: #00d4ff; }
+.account [role="alert"] { color: #fda4af; }
+.account :focus-visible { outline: 2px solid #00d4ff; outline-offset: 3px; }
