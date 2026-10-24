@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
-	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/jackc/pgx/v5"
-	stripe "github.com/stripe/stripe-go/v76"
-	"github.com/stripe/stripe-go/v76/checkout/session"
-	stripewh "github.com/stripe/stripe-go/v76/webhook"
+	routing "github.com/qiangxue/fasthttp-routing"
+	stripe "github.com/stripe/stripe-go/v87"
+	"github.com/stripe/stripe-go/v87/checkout/session"
+	stripewh "github.com/stripe/stripe-go/v87/webhook"
 )
 
 // PremiumUser tracks active premium subscriptions linked to a user.
@@ -141,6 +141,7 @@ func handleStripeWebhook(c *routing.Context) error {
 
 	event, err := stripewh.ConstructEvent(payload, sigHeader, secret)
 	if err != nil {
+		log.Printf("stripe webhook: rejected: %v", err)
 		c.SetStatusCode(400)
 		fmt.Fprintf(c, "webhook signature verification failed: %v", err)
 		return nil
@@ -160,14 +161,14 @@ func handleStripeWebhook(c *routing.Context) error {
 				customerID = sess.Customer.ID
 			}
 			if err := premiums.activate(userID, customerID); err != nil {
-				log.Printf("stripe webhook: activatePremium error for %s: %v", userID, err)
+				return stripeProcessingError(c, event.ID, err)
 			}
 		}
 
 	case "customer.subscription.deleted":
 		var sub stripe.Subscription
 		if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
-			break
+			return stripeProcessingError(c, event.ID, err)
 		}
 		customerID := ""
 		if sub.Customer != nil {
@@ -175,37 +176,46 @@ func handleStripeWebhook(c *routing.Context) error {
 		}
 		if customerID != "" {
 			if err := premiums.deactivateByCustomer(customerID); err != nil {
-				log.Printf("stripe webhook: deactivatePremium error: %v", err)
+				return stripeProcessingError(c, event.ID, err)
 			}
 		}
 
 	case "invoice.payment_succeeded":
 		var inv stripe.Invoice
 		if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
-			break
+			return stripeProcessingError(c, event.ID, err)
 		}
 		customerID := ""
 		if inv.Customer != nil {
 			customerID = inv.Customer.ID
 		}
 		userID := ""
-		if inv.SubscriptionDetails != nil {
-			userID = inv.SubscriptionDetails.Metadata["user_id"]
+		if inv.Parent != nil && inv.Parent.SubscriptionDetails != nil {
+			userID = inv.Parent.SubscriptionDetails.Metadata["user_id"]
 		}
 		if customerID == "" && userID == "" {
 			log.Printf("stripe webhook: invoice %s has no customer or user_id metadata", inv.ID)
 			break
 		}
 		if err := premiums.extend(customerID, userID, invoicePeriodEnd(&inv)); err != nil {
-			log.Printf("stripe webhook: extendPremium error for customer %s: %v", customerID, err)
+			return stripeProcessingError(c, event.ID, err)
 		}
 
 	case "invoice.payment_failed":
 		log.Printf("stripe webhook: payment failed for event %s", event.ID)
 	}
 
+	log.Printf("stripe webhook: processed event=%s type=%s", event.ID, event.Type)
 	c.SetStatusCode(200)
 	c.WriteString("ok")
+	return nil
+}
+
+// Acknowledgement follows persistence so Stripe can retry failed writes.
+func stripeProcessingError(c *routing.Context, eventID string, err error) error {
+	log.Printf("stripe webhook: processing failed event=%s: %v", eventID, err)
+	c.SetStatusCode(500)
+	c.WriteString("webhook processing failed")
 	return nil
 }
 
@@ -222,7 +232,7 @@ func activatePremium(userID, stripeCustomerID string) error {
 		INSERT INTO premium_users (user_id, premium_until, stripe_customer_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (user_id) DO UPDATE SET
-			premium_until      = $2,
+			premium_until      = GREATEST(premium_users.premium_until, $2),
 			stripe_customer_id = $3
 	`, userID, until, stripeCustomerID)
 	return err
