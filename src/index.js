@@ -2,7 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import './index.css';
 import App from './App';
+import { captureAttribution } from './attribution';
 import * as serviceWorker from './serviceWorker';
+
+captureAttribution();
 
 ReactDOM.render(<App />, document.getElementById('root'));
 

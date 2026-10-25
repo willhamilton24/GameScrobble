@@ -1,0 +1,26 @@
+COMMUNITY: r/patientgamers
+
+--- DRAFT TITLE (only if community rules permit) ---
+GameScrobble: a Steam playtime heatmap — looking for feedback
+
+--- BODY ---
+I'm sharing GameScrobble, a project our team is building to visualize Steam playtime.
+With a linked Steam account and accessible game data, it periodically checks Steam's
+reported playtime. Increases between checks feed a daily heatmap and a public profile
+with top games. It does not record exact session start/end times or reconstruct a
+historical year of daily activity before tracking began.
+
+Try it here: https://gameroom.hdynamic.app/?utm_source=reddit_patientgamers
+
+Account signup, the heatmap, and top games are free. Premium features include CSV
+export and additional tracked-game statistics. Payments are currently in Stripe test
+mode; this is a feedback launch, not a paid subscription launch.
+
+We'd welcome feedback on whether this view helps you understand your playing habits,
+and what information is missing for people working through a backlog.
+
+--- POST NOTES ---
+- Check current subreddit rules and obtain moderator permission where required BEFORE posting.
+- Use an approved self-promotion thread if available; do not assume standalone promotion is allowed.
+- Do not post if the rules prohibit this content. Do not cross-post the same text in multiple communities.
+- Use the company account, disclose the team affiliation above, and respond to questions.

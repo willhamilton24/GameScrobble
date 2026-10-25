@@ -38,12 +38,30 @@ func initDB(ctx context.Context) {
 }
 
 func migrateDB(ctx context.Context) {
+	if err := runMigrations(ctx); err != nil {
+		log.Fatal("failed to run database migrations: ", err)
+	}
+}
+
+func runMigrations(ctx context.Context) error {
 	_, err := db.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT        PRIMARY KEY,
     email         TEXT        NOT NULL UNIQUE,
     password_hash TEXT        NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at  TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_source  TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS retention_tracking (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO retention_tracking (singleton) VALUES (TRUE) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS user_return_activity (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    activity_date DATE NOT NULL,
+    PRIMARY KEY (user_id, activity_date)
 );
 CREATE TABLE IF NOT EXISTS steam_links (
     user_id            TEXT    PRIMARY KEY,
@@ -123,7 +141,5 @@ CREATE TABLE IF NOT EXISTS games (
     platforms          JSONB NOT NULL DEFAULT '[]'
 );
 `)
-	if err != nil {
-		log.Fatal("failed to run database migrations: ", err)
-	}
+	return err
 }

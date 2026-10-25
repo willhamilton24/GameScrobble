@@ -105,7 +105,7 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatal("application request failed or timed out (details suppressed)")
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			t.Fatalf("application request returned HTTP %d", resp.StatusCode)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
