@@ -110,7 +110,8 @@ func TestQueryFailuresDoNotReturnPartialResponses(t *testing.T) {
 				router := routing.New()
 				router.Get("/<user_id>", handler)
 				ctx := &fasthttp.RequestCtx{}
-				ctx.Request.SetRequestURI("/test-user?user_id=test-user")
+				ctx.Request.SetRequestURI("/test-user")
+				ctx.SetUserValue(authenticatedUserIDKey{}, "test-user")
 				router.HandleRequest(ctx)
 				if ctx.Response.StatusCode() != 500 {
 					t.Fatalf("status=%d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())

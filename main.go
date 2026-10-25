@@ -442,14 +442,13 @@ func linkAccount(c *routing.Context) error {
 // Premium Routes
 //
 
-// getDeepStats returns all-time playtime aggregations for a user (premium only).
-// Query param: user_id
+// getDeepStats returns all-time playtime aggregations for the authenticated user (premium only).
 func getDeepStats(c *routing.Context) error {
-	userID := string(c.QueryArgs().Peek("user_id"))
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
 	if userID == "" {
-		c.SetStatusCode(400)
+		c.SetStatusCode(401)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"user_id is required"}`)
+		c.WriteString(`{"error":"authentication required"}`)
 		return nil
 	}
 
@@ -536,14 +535,13 @@ var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, e
 	return result, nil
 }
 
-// exportHistory streams a CSV of all play history for a user (premium only).
-// Query param: user_id
+// exportHistory streams a CSV of all play history for the authenticated user (premium only).
 func exportHistory(c *routing.Context) error {
-	userID := string(c.QueryArgs().Peek("user_id"))
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
 	if userID == "" {
-		c.SetStatusCode(400)
+		c.SetStatusCode(401)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"user_id is required"}`)
+		c.WriteString(`{"error":"authentication required"}`)
 		return nil
 	}
 
@@ -959,6 +957,9 @@ func main() {
 
 	// Premium subscription
 	router.Post("/api/stripe/checkout", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
 		return createCheckoutSession(c)
 	})
 	router.Post("/api/stripe/webhook", func(c *routing.Context) error {
@@ -967,9 +968,15 @@ func main() {
 
 	// Premium-gated endpoints
 	router.Get("/u/stats", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
 		return getDeepStats(c)
 	})
 	router.Get("/u/export", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
 		return exportHistory(c)
 	})
 

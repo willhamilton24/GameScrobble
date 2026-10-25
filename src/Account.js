@@ -76,6 +76,32 @@ export default function Account() {
     }
   }
 
+  async function exportHistory() {
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/u/export', {
+        headers: { Authorization: `Bearer ${localStorage.getItem(sessionKey)}` }
+      });
+      if (response.status === 402) throw new Error('Premium subscription required. Upgrade to download your history.');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'Unable to export history.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'gameroom_history.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function checkout() {
     setBusy(true);
     setError('');
@@ -83,7 +109,6 @@ export default function Account() {
       const response = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem(sessionKey)}` },
-        body: JSON.stringify({ user_id: user.id })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to start checkout.');
@@ -102,7 +127,7 @@ export default function Account() {
         <div>
           <p>Signed in as {user.email}</p>
           <p><a href={`/u/${encodeURIComponent(user.id)}`}>View your profile</a></p>
-          <p><a href={`/u/export?user_id=${encodeURIComponent(user.id)}`}>Export history (Premium)</a></p>
+          <p><button type="button" disabled={busy} onClick={exportHistory}>Export history (Premium)</button></p>
           <button type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
           <button type="button" disabled={busy} onClick={logout}>Log out</button>
         </div>
