@@ -89,7 +89,7 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatalf("webhook is not subscribed to %s", required)
 		}
 	}
-	appPost := func(path string, data any, dst any) {
+	appPost := func(path, token string, data any, dst any) {
 		t.Helper()
 		body, err := json.Marshal(data)
 		if err != nil {
@@ -100,6 +100,9 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatal("could not construct application request")
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal("application request failed or timed out (details suppressed)")
@@ -117,22 +120,28 @@ func TestStripeE2E(t *testing.T) {
 		t.Fatal("could not generate signup password")
 	}
 	var reg struct {
-		User struct {
+		Token string `json:"token"`
+		User  struct {
 			ID string `json:"id"`
 		} `json:"user"`
 	}
-	appPost("/auth/register", map[string]string{"email": fmt.Sprintf("e2e-%d@example.com", time.Now().UnixNano()), "password": hex.EncodeToString(random[:])}, &reg)
+	appPost("/auth/register", "", map[string]string{"email": fmt.Sprintf("e2e-%d@example.com", time.Now().UnixNano()), "password": hex.EncodeToString(random[:])}, &reg)
 	if reg.User.ID == "" {
 		t.Fatal("registration returned no user ID")
 	}
+	if reg.Token == "" {
+		t.Fatal("registration returned no token")
+	}
 	userID := reg.User.ID
+	token := reg.Token
 	t.Logf("registered user %s", userID)
 	export := func() (int, http.Header, []byte) {
 		t.Helper()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e2eAppURL+"/u/export?user_id="+url.QueryEscape(userID), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e2eAppURL+"/u/export", nil)
 		if err != nil {
 			t.Fatal("could not construct export request")
 		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal("export request failed or timed out (details suppressed)")
@@ -150,7 +159,7 @@ func TestStripeE2E(t *testing.T) {
 	var checkout struct {
 		URL string `json:"url"`
 	}
-	appPost("/api/stripe/checkout", map[string]string{"user_id": userID}, &checkout)
+	appPost("/api/stripe/checkout", token, map[string]string{}, &checkout)
 	hosted, err := url.Parse(checkout.URL)
 	if err != nil || hosted.Scheme != "https" || hosted.Host != "checkout.stripe.com" || hosted.User != nil {
 		t.Fatal("application returned an invalid hosted Checkout URL")

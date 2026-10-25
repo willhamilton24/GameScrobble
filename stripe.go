@@ -64,15 +64,13 @@ func appBaseURL() string {
 }
 
 // createCheckoutSession creates a Stripe Checkout session for a premium subscription.
-// Body: {"user_id": "<id>"}
+// Derives the user from the authenticated session; body is ignored.
 func createCheckoutSession(c *routing.Context) error {
-	var req struct {
-		UserID string `json:"user_id"`
-	}
-	if err := json.Unmarshal(c.PostBody(), &req); err != nil || req.UserID == "" {
-		c.SetStatusCode(400)
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
+	if userID == "" {
+		c.SetStatusCode(401)
 		c.SetContentType("application/json")
-		c.WriteString(`{"error":"user_id is required"}`)
+		c.WriteString(`{"error":"authentication required"}`)
 		return nil
 	}
 
@@ -104,11 +102,11 @@ func createCheckoutSession(c *routing.Context) error {
 		},
 		SuccessURL: stripe.String(base + "/premium/success?session_id={CHECKOUT_SESSION_ID}"),
 		CancelURL:  stripe.String(base + "/premium/cancel"),
-		Metadata:   map[string]string{"user_id": req.UserID},
+		Metadata:   map[string]string{"user_id": userID},
 		// Copy the user onto the subscription so renewal invoices
 		// (invoice.payment_succeeded) can be attributed back to the user.
 		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
-			Metadata: map[string]string{"user_id": req.UserID},
+			Metadata: map[string]string{"user_id": userID},
 		},
 	}
 

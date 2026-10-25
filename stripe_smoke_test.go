@@ -116,8 +116,9 @@ func doExportReq(userID string) *fasthttp.RequestCtx {
 	r := routing.New()
 	r.Get("/u/export", exportHistory)
 	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/u/export?user_id=" + userID)
+	ctx.Request.SetRequestURI("/u/export")
 	ctx.Request.Header.SetMethod("GET")
+	ctx.SetUserValue(authenticatedUserIDKey{}, userID)
 	r.HandleRequest(ctx)
 	return ctx
 }
