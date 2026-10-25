@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
-const sessionKey = 'gamescrobble.token';
+const sessionKey = 'gameroom.token';
 
 export default function Account() {
   const [user, setUser] = useState(null);

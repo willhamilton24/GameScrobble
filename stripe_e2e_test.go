@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	stripe "github.com/stripe/stripe-go/v76"
+	stripe "github.com/stripe/stripe-go/v87"
 )
 
 const e2eAppURL = "https://gameroom.hdynamic.app"
@@ -59,7 +59,7 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatal("could not construct Stripe request")
 		}
 		req.SetBasicAuth(key, "")
-		req.Header.Set("Stripe-Version", "2023-10-16")
+		req.Header.Set("Stripe-Version", stripe.APIVersion)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal("Stripe request failed or timed out (details suppressed)")
@@ -176,7 +176,7 @@ func TestStripeE2E(t *testing.T) {
 		}
 	}
 	retrieveSession()
-	file, err := os.CreateTemp("", "gamescrobble-checkout-*.txt")
+	file, err := os.CreateTemp("", "gameroom-checkout-*.txt")
 	if err != nil {
 		t.Fatal("could not create private Checkout URL file")
 	}
@@ -274,7 +274,7 @@ func TestStripeE2E(t *testing.T) {
 		if status != 200 {
 			t.Fatalf("premium export returned %d", status)
 		}
-		if headers.Get("Content-Type") != "text/csv" || headers.Get("Content-Disposition") != `attachment; filename="gamescrobble_history.csv"` || !bytes.HasPrefix(body, []byte("app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n")) {
+		if headers.Get("Content-Type") != "text/csv" || headers.Get("Content-Disposition") != `attachment; filename="gameroom_history.csv"` || !bytes.HasPrefix(body, []byte("app_id,name,playtime_total_minutes,playtime_recent_minutes,last_polled\n")) {
 			t.Fatal("invalid CSV export headers or contents")
 		}
 		return true
