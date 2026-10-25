@@ -1010,7 +1010,7 @@ func main() {
 		return getPublicProfile(c)
 	})
 
-	// Retention metrics (requires ADMIN_KEY query param)
+	// Retention metrics (requires Authorization: Bearer <ADMIN_KEY>; query parameters are rejected.)
 	router.Get("/api/admin/retention", func(c *routing.Context) error {
 		return getRetentionStats(c)
 	})
