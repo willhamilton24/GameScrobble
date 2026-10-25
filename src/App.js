@@ -6,9 +6,9 @@ import './App.css';
 function Home() {
   return (
     <main>
-      <h1>GameScrobble</h1>
-      <p>Last.fm for games — unified play-history tracking across Steam, Xbox, PSN, and Epic.</p>
-      <p className="tagline">Share your year in games. Track every session.</p>
+      <h1>gameroom</h1>
+      <p>Explore your Steam playtime with a public profile and daily heatmap.</p>
+      <p className="tagline">See playtime changes observed since tracking began.</p>
       <Account />
     </main>
   );

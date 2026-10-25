@@ -1,3 +1,5 @@
+# gameroom
+
 ![Concept](https://img.shields.io/badge/Concept-C-yellow) ![Effort to Cashflow](https://img.shields.io/badge/Effort_to_Cashflow-85%2F100-red)
 
 +++User /u
@@ -29,21 +31,29 @@ The Steam routes (`/s/link`, `/s/status`, `/s/recent`) use the official Steam We
 
 - `STEAM_API_KEY` — a Steam Web API key, obtained at https://steamcommunity.com/dev/apikey. Set it in the deploy environment (e.g. the Render service's env vars); never commit the value to the repo.
 
+### gameroom naming update
+
+The application now uses `gameroom.token` for browser sessions; existing users must sign in again after this update. CSV downloads use `gameroom_history.csv`.
+
+On startup, the database migration identifies the previous history table by its complete column signature and renames it to `play_history`, preserving existing rows. Fresh databases create `play_history` directly; repeated startup leaves it intact. Multiple matching legacy tables cause migration to fail rather than choose a table arbitrarily.
+
+Keep deployments attached to the existing Render service when applying its `gameroom-api` display name; the public URL remains https://gameroom.hdynamic.app.
+
 ## 💰 Path to Revenue
-"Last.fm for games" — unified play-history tracking across Steam/Xbox/PSN/Epic — monetizes via a Stripe premium tier (deeper stats, CSV history export) and affiliate game-deal links. The product loop is built: Go API with Steam Web API scrobble polling, JWT accounts, Xbox/PSN/Epic OAuth linking, public profile pages ("year in games" heatmap), Stripe checkout + webhook, and a React frontend. The remaining gap is plumbing: persistence still targets MongoDB (not on the shared platform — the Render service has no `MONGODB_URI`, so the deployed API currently has no database), and platform API credentials need operator sign-ups.
+gameroom tracks observed Steam playtime changes with a Go API, JWT accounts, public profile heatmaps, and a React frontend. Persistence uses Postgres via `DATABASE_URL`. Premium gates additional statistics and CSV export through Stripe test-mode checkout and webhooks. Xbox/PSN/Epic OAuth linking code exists, but does not provide unified playtime tracking. Community launch drafts and exact-day retention measurement are described below; platform credentials and community posting remain operator-managed.
 
 ### Release TODOs
 - [x] Finish the Steam integration end-to-end using official Web API keys (drop the ChromeDP password-login approach — it is a security and ToS liability)
 - [x] Implement user accounts + OAuth linking for Xbox, PSN, and Epic (currently just route placeholders)
 - [x] Replace committed node_modules and stray frontend artifacts with a clean repo layout (.gitignore)
 - [x] Build a public profile page ("year in games", playtime heatmap) — the shareable artifact that drives signups
-- [x] Deploy config (render.yaml) + scheduled scrobble polling
+- [x] Deploy config (render.yaml) + scheduled play-history polling
 - [x] Add a premium tier (deeper stats, history export) via Stripe and affiliate links to game deals
 - [x] Migrate persistence from MongoDB to Neon Postgres via `DATABASE_URL` (shared platform; `MONGODB_URI` is not provisioned, so nothing works in the deployed environment until this ships) — update render.yaml accordingly
-- [x] Complete Stripe test-mode E2E verification of signup → application Checkout → webhook → premium CSV export → cancellation gating. Monkey successfully verified deployed head `7606188` on 2026-10-24 at `https://gameroom.hdynamic.app`: signup, application Checkout session `cs_test_a19vxivBRuRlzuLEPlGhrcdzDygKIxgEwKbqBRFLerwGxMqyWY1NSl61j3`, webhook delivery, premium unlock with CSV export returning HTTP 200 and correct headers (`Content-Type: text/csv` and `Content-Disposition: attachment; filename="gamescrobble_history.csv"`), cancellation of subscription `sub_1UTxCgGRjKD6n9dmD6IDQi4R`, and restored HTTP 402 export gating. This records Monkey's verification of the deployed application flow; it is not evidence that the revised `TestStripeE2E` ran. Execution of that Go test remains unverified.
+- [x] Complete Stripe test-mode E2E verification of signup → application Checkout → webhook → premium CSV export → cancellation gating. Monkey successfully verified deployed head `7606188` on 2026-10-24 at `https://gameroom.hdynamic.app`: signup, application Checkout session `cs_test_a19vxivBRuRlzuLEPlGhrcdzDygKIxgEwKbqBRFLerwGxMqyWY1NSl61j3`, webhook delivery, premium unlock with CSV export returning HTTP 200 and correct headers (`Content-Type: text/csv` and an attachment filename), cancellation of subscription `sub_1UTxCgGRjKD6n9dmD6IDQi4R`, and restored HTTP 402 export gating. This records Monkey's verification of the deployed application flow; it is not evidence that the revised `TestStripeE2E` ran. Execution of that Go test remains unverified.
 - [ ] Set platform credentials: `STEAM_API_KEY`, plus Xbox (`XBOX_CLIENT_ID`/`SECRET`), PSN, and Epic OAuth app registrations (operator sign-ups; Steam linking alone is enough to launch)
 - [ ] Verify the Render deploy end-to-end and point the Stripe webhook at the live URL (`https://gameroom.hdynamic.app`). Deployment is authorized; frontend, UI authentication persistence, and Stripe delivery/application processing must all have actual verification evidence before completion. See the verification record below. Mark complete only when actual verification evidence is recorded.
-- [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention (waits on the deployment switch)
+- [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention (deployment switch on; posting and mature cohorts pending)
 - [ ] Enforce account ownership on premium stats, CSV export, and checkout: reuse the existing JWT middleware and derive the user from the session instead of trusting `user_id`; download CSV with authenticated fetch in `src/Account.js`. Verify anonymous and cross-account requests cannot access another subscriber's data using local fixtures.
 - [ ] Build a Premium stats view for the existing `/u/stats` response: show all-time playtime and a sortable game table, with loading, empty, retry, and free-tier upgrade states. Verify populated and empty accounts with fixture responses so buyers can use the advertised deeper stats without platform API credentials.
 - [ ] Implement distinct `/premium/success` and `/premium/cancel` screens in `src/App.js`; expose the signed-in account's server-verified entitlement, show pending activation with bounded refresh, and offer export only after activation. Test active, delayed-webhook, cancelled, and expired states locally; never unlock from the return URL alone.
@@ -102,7 +112,7 @@ No secrets, tokens, or test payment credentials are recorded here. No new provid
 
 
 - **Independent QA, 03:52:34Z–03:53:22Z (with second reload immediately afterward):** native Chrome rendered the **changed local production build**, served on a temporary loopback proxy forwarding authentication/export/checkout to the existing live backend. UI signup created account `6f5fe9b0f09fc7e7406b8f20a4a6dcb0`; reload preserved the session, logout removed it, and login plus another reload restored the same identity. Direct live CSV export for that account returned **402 at 03:52:34Z**. This demonstrates real account persistence through the existing Postgres-backed APIs and local UI session behavior, **not deployment or QA of the corrected backend head**. The proxy contains no credentials and is not part of the release.
-- **Independent QA, 03:54:01Z:** that account's Upgrade button opened application-created checkout `cs_test_a1xQmx95h2Dw5vaviFDLiU9cG6DH4tcsxnKLubEWuZCcRkCFCDHibHDzja`; Chrome displayed Stripe Sandbox, GameScrobble Premium, $4.99/month. No payment was entered/completed, so this session does not establish premium activation or a successful webhook. QA found its cancel URL pointed to the old `gamescrobble-api.onrender.com` hostname. **03:54:18.014Z:** company provisioning set `APP_BASE_URL=https://gameroom.hdynamic.app` on the existing Render service. A fresh checkout must verify both return URLs after the corrected deployment loads that configuration; the existing checkout retains its old URLs.
+- **Independent QA, 03:54:01Z:** that account's Upgrade button opened application-created checkout `cs_test_a1xQmx95h2Dw5vaviFDLiU9cG6DH4tcsxnKLubEWuZCcRkCFCDHibHDzja`; Chrome displayed Stripe Sandbox, the premium subscription, $4.99/month. No payment was entered/completed, so this session does not establish premium activation or a successful webhook. QA found its cancel URL pointed to the old Render hostname. **03:54:18.014Z:** company provisioning set `APP_BASE_URL=https://gameroom.hdynamic.app` on the existing Render service. A fresh checkout must verify both return URLs after the corrected deployment loads that configuration; the existing checkout retains its old URLs.
 - **03:54:37Z:** independent Chrome inspection of the public site still rendered the previous “PUBLIC BETA COMING SOON” page with no account controls, confirming the local UI has not been deployed. **03:54:38.189Z:** Stripe API confirmed the application-created checkout above is test-mode, unpaid, and has `metadata.user_id=6f5fe9b0f09fc7e7406b8f20a4a6dcb0`; both stored return URLs use the old Render hostname. **03:54:38.481Z:** Render environment readback confirmed the corrected `APP_BASE_URL` value.
 - **Delivery-response access remains incomplete:** independent QA opened the Stripe endpoint dashboard but was redirected through Stripe login to Google sign-in, with no signed-in company browser session. Provider API access worked for configuration/event inspection; it did not supply an endpoint-specific delivery receipt. No alternative identity, signing-secret rotation, or signature bypass was used.
 
@@ -164,3 +174,64 @@ Current review-fix checklist (supersedes earlier remaining-check lists):
 - **Test suites passed:** React suite 2 suites / 3 tests (including signup → restore → logout → login full flow and expired-session/error handling); Go suite passed (cached). No source changes were required.
 - **Prior live UI evidence stands:** account `e8236f3c89e08be2538e8c364220c69f` was created, reload preserved, logout and login re-verified at 04:22–04:23 UTC today against the same deployed head (`dep-dbe2one1egvs73fe916g`, commit `8a5dc89`). No duplicate UI workflow was performed.
 - **Remaining verification checklist item updated:** "Verify frontend rendering and UI signup → logout → login → persisted session/account state" marked [x]. The Stripe endpoint delivery receipt item remains open.
+
+## Community launch retention (review corrections)
+
+Community drafts are in `community/`. Check current community rules and obtain any
+required moderator permission before posting. The posting text uses campaign links
+on `https://gameroom.hdynamic.app`. Implemented tracking polls Steam's recently played
+games about every 15 minutes and records increases in reported playtime; it is not
+exact session recording or historical daily reconstruction. Xbox/PSN/Epic linking
+code does not establish unified playtime tracking. Free public profiles expose top
+games and a daily heatmap; Premium gates CSV export and additional game statistics.
+The drafts omit a price claim and explicitly describe Stripe test mode, not a paid
+launch. Claims were checked against `pollUserScrobbles`, `startScrobblePoller`,
+`getPublicProfile`, `getDeepStats`, and `exportHistory`.
+
+`GET /api/admin/retention` requires `Authorization: Bearer <ADMIN_KEY>`; never put
+credentials in URLs. This endpoint accepts no query parameters and returns
+`Cache-Control: no-store` on success and failure. Missing/wrong credentials return
+401. Database query, scan, and iteration failures return 500 with no partial
+metrics; server logs identify the failed operation without database error contents.
+
+Retention is exact-day, per unique authenticated user: D1/D7/D30 means a return on
+signup UTC date plus 1/7/30 calendar days. A target date must be strictly earlier
+than today's UTC date to be eligible, so incomplete days are excluded. Successful
+logins and authenticated API requests (including `/auth/me` session restoration)
+write one `user_return_activity` row per user and UTC date. Anonymous profile views
+and background Steam polling are excluded. These writes are best-effort and log
+failures without failing authentication; metrics can undercount during write outages.
+
+The migration records the first tracking start timestamp without resetting it on
+subsequent runs. Pre-tracking signups are conservatively reported as historical
+unavailable once mature, never as failures to return. No login timestamps or Steam
+playtime are backfilled as return visits. Each overall and source D1/D7/D30 row
+reports `eligible_users`, `returning_users`, `immature_users`,
+`historical_unavailable_users`, and `rate` (a fraction, not percent). Rate is null
+when there are no eligible users; zero means eligible users exist but none returned.
+Overall rows have `scope: overall` and an empty source; source rows have `scope: source`.
+Rows aggregate all eligible signup dates since tracking started, not rolling windows.
+
+Attribution is first application entry per browser tab, saved in sessionStorage
+before rendering and retained across navigation/reloads to registration. Missing or
+empty `utm_source` means `direct`; unsupported campaign values or unavailable storage
+mean `unknown`. Supported values are `reddit_patientgamers`, `backloggd`, `direct`,
+and `unknown`. Registration rejects all other values with 400, including oversized,
+non-ASCII, control-character, and malformed strings; nothing is byte-truncated.
+Omitted API source means direct; legacy blank/unsupported database sources are
+reported as unknown because their original attribution was not captured.
+
+Run local QA with a disposable PostgreSQL database:
+
+```sh
+RETENTION_TEST_DATABASE_URL='<local disposable PostgreSQL URL>' go test ./... -count=1
+CI=true npm test -- --watch=false --runInBand
+npm run build
+```
+
+The PostgreSQL test creates/removes an isolated schema, runs migrations twice on
+empty and preexisting users schemas, checks preservation of the tracking timestamp
+and existing users, and tests fixed UTC maturity boundaries for all three horizons,
+source breakdowns, historical unavailability, rates, and repeated activity.
+The live Stripe E2E test remains opt-in and requires its documented browser checkout
+step; local tests are not evidence of a new deployed Stripe checkout.

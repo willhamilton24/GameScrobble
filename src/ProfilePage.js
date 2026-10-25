@@ -152,7 +152,7 @@ function ProfilePage({ userId }) {
         <h2>No profile found</h2>
         <p>No gaming data for &ldquo;{userId}&rdquo; yet.</p>
         <a href="/" className="cta-btn" style={{ marginTop: '1.5rem', display: 'inline-block' }}>
-          Get GameScrobble
+          Get gameroom
         </a>
       </div>
     );
@@ -221,9 +221,9 @@ function ProfilePage({ userId }) {
       <footer className="profile-footer">
         <div className="cta-block">
           <p className="cta-copy">Track your own gaming history across Steam, Xbox, PSN, and Epic.</p>
-          <a href="/" className="cta-btn">Get GameScrobble</a>
+          <a href="/" className="cta-btn">Get gameroom</a>
         </div>
-        <p className="footer-brand">GameScrobble</p>
+        <p className="footer-brand">gameroom</p>
       </footer>
     </div>
   );

@@ -1,0 +1,30 @@
+COMMUNITY: Backloggd users
+
+--- SHORT MESSAGE (approved promotion channel only) ---
+Our team is building GameScrobble, a Steam playtime tracker. It periodically checks
+Steam's reported playtime and turns observed increases into a daily heatmap and top-games
+profile. It could complement your manual game log; it doesn't import or sync Backloggd data.
+Try it and tell us what's useful: https://gameroom.hdynamic.app/?utm_source=backloggd
+Signup, the heatmap, and top games are free. Steam game data must be accessible.
+
+--- LONGER VERSION ---
+We're looking for feedback from people who enjoy keeping a game log. GameScrobble
+checks linked Steam accounts about every 15 minutes and records observed playtime
+increases. A public profile shows a daily heatmap and top games. This is estimated
+daily activity from polling, not exact session recording, and daily history starts
+when tracking begins. It currently tracks Steam playtime.
+
+Try it here: https://gameroom.hdynamic.app/?utm_source=backloggd
+
+Signup, heatmaps, and top games are free. CSV export and additional tracked-game
+statistics are Premium features. Payments are currently in Stripe test mode;
+this is a feedback launch, not a paid subscription launch.
+
+What would help you compare your manual game log with actual Steam playtime?
+
+--- POST NOTES ---
+- Find the community's official channels and check current rules BEFORE posting.
+- Obtain moderator permission where required; use only an approved promotion channel.
+- Do not assume any particular Discord invitation, channel name, or subreddit exists.
+- Do not DM users without permission or duplicate the message across channels.
+- Use the company account and disclose the team affiliation; respond to feedback.

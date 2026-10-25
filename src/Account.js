@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 
-const sessionKey = 'gamescrobble.token';
+import { signupAttribution } from './attribution';
+
+const sessionKey = 'gameroom.token';
 
 export default function Account() {
   const [user, setUser] = useState(null);
@@ -42,10 +44,14 @@ export default function Account() {
     setBusy(true);
     setError('');
     try {
+      const body = { email, password };
+      if (mode === 'register') {
+        body.source = signupAttribution();
+      }
       const response = await fetch(`/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify(body)
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to sign in.');

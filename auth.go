@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	routing "github.com/qiangxue/fasthttp-routing"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -153,20 +153,27 @@ func authMiddleware(c *routing.Context) bool {
 		return false
 	}
 	c.SetUserValue(authenticatedUserIDKey{}, userID)
+	recordReturnActivity(userID)
 	return true
 }
 
 // registerUser handles POST /auth/register.
-// Body: {"email":"...","password":"..."}
+// Body: {"email":"...","password":"...","source":"..."}
 func registerUser(c *routing.Context) error {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Source   string `json:"source"`
 	}
 	if err := json.Unmarshal(c.PostBody(), &req); err != nil || req.Email == "" || req.Password == "" {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"email and password are required"}`)
+		return nil
+	}
+	source, valid := signupSource(req.Source)
+	if !valid {
+		writeJSONError(c, 400, "invalid signup source")
 		return nil
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
@@ -190,8 +197,8 @@ func registerUser(c *routing.Context) error {
 	defer cancel()
 
 	_, err = db.Exec(ctx,
-		`INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)`,
-		id, req.Email, string(hash), time.Now().UTC(),
+		`INSERT INTO users (id, email, password_hash, created_at, signup_source) VALUES ($1, $2, $3, $4, $5)`,
+		id, req.Email, string(hash), time.Now().UTC(), source,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -266,6 +273,8 @@ func loginUser(c *routing.Context) error {
 		return nil
 	}
 
+	recordReturnActivity(user.ID)
+
 	token, err := signToken(user.ID)
 	if err != nil {
 		c.SetStatusCode(500)
@@ -310,4 +319,17 @@ func getMe(c *routing.Context) error {
 	out, _ := json.Marshal(map[string]string{"id": user.ID, "email": user.Email})
 	c.Write(out)
 	return nil
+}
+
+// Only these campaign values are supported. Empty means direct; unknown is
+// explicitly unattributed (e.g. an unrecognized campaign captured by the UI).
+func signupSource(source string) (string, bool) {
+	switch source {
+	case "":
+		return "direct", true
+	case "direct", "unknown", "reddit_patientgamers", "backloggd":
+		return source, true
+	default:
+		return "", false
+	}
 }
