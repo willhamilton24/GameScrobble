@@ -72,3 +72,19 @@ it('discards an expired session and displays authentication errors', async () =>
   await submit();
   expect(JSON.parse(fetch.mock.calls[0][1].body).source).toBe('backloggd');
  });
+
+it('opens stats for the signed-in account and removes them on logout', async () => {
+  localStorage.setItem('gameroom.token', 'fixture-token');
+  fetch.mockImplementationOnce(() => response(account));
+  await render();
+  fetch.mockImplementationOnce(() => response({ stats: [] }));
+  await act(async () => {
+    Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'View Premium stats'));
+  });
+  expect(fetch.mock.calls[1]).toEqual([`/u/stats?user_id=${account.id}`, {
+    headers: { Authorization: 'Bearer fixture-token' }, cache: 'no-store'
+  }]);
+  expect(root.textContent).toContain('No game stats yet');
+  act(() => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Log out')); });
+  expect(root.querySelector('.premium-stats')).toBe(null);
+});

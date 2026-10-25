@@ -55,10 +55,28 @@ gameroom tracks observed Steam playtime changes with a Go API, JWT accounts, pub
 - [ ] Verify the Render deploy end-to-end and point the Stripe webhook at the live URL (`https://gameroom.hdynamic.app`). Deployment is authorized; frontend, UI authentication persistence, and Stripe delivery/application processing must all have actual verification evidence before completion. See the verification record below. Mark complete only when actual verification evidence is recorded.
 - [ ] Launch to gaming communities (r/patientgamers, Backloggd users) and validate retention (deployment switch on; posting and mature cohorts pending)
 - [ ] Enforce account ownership on premium stats, CSV export, and checkout: reuse the existing JWT middleware and derive the user from the session instead of trusting `user_id`; download CSV with authenticated fetch in `src/Account.js`. Verify anonymous and cross-account requests cannot access another subscriber's data using local fixtures.
-- [ ] Build a Premium stats view for the existing `/u/stats` response: show all-time playtime and a sortable game table, with loading, empty, retry, and free-tier upgrade states. Verify populated and empty accounts with fixture responses so buyers can use the advertised deeper stats without platform API credentials.
+- [x] Build a Premium stats view for the existing `/u/stats` response: show all-time playtime and a sortable game table, with loading, empty, retry, and free-tier upgrade states. Verify populated and empty accounts with fixture responses so buyers can use the advertised deeper stats without platform API credentials.
 - [ ] Implement distinct `/premium/success` and `/premium/cancel` screens in `src/App.js`; expose the signed-in account's server-verified entitlement, show pending activation with bounded refresh, and offer export only after activation. Test active, delayed-webhook, cancelled, and expired states locally; never unlock from the return URL alone.
 - [ ] Add a clearly labeled sample year-in-games profile and a Free versus Premium feature comparison to the landing page, linking to signup and the existing checkout flow. Use bundled fictional activity, separate from real accounts, to demonstrate the heatmap, stats, and CSV value without Steam credentials or live ingestion.
 - [ ] Make public profiles recoverable and easy to share: distinguish not-found from server/network errors in `src/ProfilePage.js`, add retry, and provide a selectable profile URL when clipboard access fails or is unavailable. Verify all failure states and successful copying with frontend fixtures to protect the signup referral loop.
+
+### Premium stats view verification
+
+Signed-in accounts can select **View Premium stats** in the account panel. The
+view fetches `/u/stats` with the session bearer token and the existing `user_id`
+parameter, totals the returned game minutes, and sorts by game, all-time playtime,
+recent playtime, or last sync. HTTP 402 offers the existing Premium checkout action;
+errors offer retry, and successful empty responses show zero playtime with sync
+guidance. The separate backend account-ownership TODO remains open.
+
+Fictional populated, empty, and free-tier responses live in
+`src/fixtures/premiumStats.json`; no platform API credentials are needed. Local
+verification: `CI=true npm test -- --watch=false --runInBand --runTestsByPath src/PremiumStats.test.js src/Account.test.js`
+passed 12 tests covering loading, totals, both sort directions, empty accounts,
+upgrade/recheck, error/retry, stale responses, and signed-in account integration.
+`npm run build` passed. The full frontend suite has an unrelated existing failure
+in `src/App.test.js`, which expects outdated landing-page copy. These are local
+fixture checks, not live platform or payment verification.
 
 The local `TestStripeSmoke` test provides in-process webhook/gating coverage using signed synthetic events, in-memory premium state, and deterministic export data. It verifies premium activation, invoice expiration extension, successful CSV export, and 402 gating before activation and after cancellation. It does not exercise signup, checkout creation, or delivery by Stripe.
 
