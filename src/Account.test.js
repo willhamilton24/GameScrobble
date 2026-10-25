@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { act, Simulate } from 'react-dom/test-utils';
 import Account from './Account';
+import { captureAttribution } from './attribution';
 
 let root;
 const account = { id: 'qa-account', email: 'qa@example.test' };
@@ -16,6 +17,8 @@ async function submit() {
 }
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
+  window.history.replaceState({}, '', '/');
   root = document.createElement('div');
   document.body.appendChild(root);
   global.fetch = jest.fn();
@@ -58,3 +61,14 @@ it('discards an expired session and displays authentication errors', async () =>
   expect(root.querySelector('[role=alert]').textContent).toBe('email already registered');
   expect(root.textContent).not.toContain('Signed in as');
 });
+
+ it('sends initial entry attribution after navigating to the registration page', async () => {
+  window.history.replaceState({}, '', '/u/example?utm_source=backloggd');
+  captureAttribution();
+  window.history.replaceState({}, '', '/');
+  captureAttribution();
+  await render();
+  fetch.mockImplementationOnce(() => response({ token: 'test-token', user: account }, 201));
+  await submit();
+  expect(JSON.parse(fetch.mock.calls[0][1].body).source).toBe('backloggd');
+ });

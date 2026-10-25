@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	routing "github.com/qiangxue/fasthttp-routing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	routing "github.com/qiangxue/fasthttp-routing"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -153,6 +153,7 @@ func authMiddleware(c *routing.Context) bool {
 		return false
 	}
 	c.SetUserValue(authenticatedUserIDKey{}, userID)
+	recordReturnActivity(userID)
 	return true
 }
 
@@ -168,6 +169,11 @@ func registerUser(c *routing.Context) error {
 		c.SetStatusCode(400)
 		c.SetContentType("application/json")
 		c.WriteString(`{"error":"email and password are required"}`)
+		return nil
+	}
+	source, valid := signupSource(req.Source)
+	if !valid {
+		writeJSONError(c, 400, "invalid signup source")
 		return nil
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
@@ -189,12 +195,6 @@ func registerUser(c *routing.Context) error {
 	id := newUserID()
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-
-	// Sanitize source: keep only safe chars, max 64.
-	source := req.Source
-	if len(source) > 64 {
-		source = source[:64]
-	}
 
 	_, err = db.Exec(ctx,
 		`INSERT INTO users (id, email, password_hash, created_at, signup_source) VALUES ($1, $2, $3, $4, $5)`,
@@ -273,10 +273,7 @@ func loginUser(c *routing.Context) error {
 		return nil
 	}
 
-	// Best-effort; login still succeeds if this write fails.
-	loginCtx, loginCancel := context.WithTimeout(context.Background(), dbTimeout)
-	db.Exec(loginCtx, `UPDATE users SET last_login_at = $1 WHERE id = $2`, time.Now().UTC(), user.ID)
-	loginCancel()
+	recordReturnActivity(user.ID)
 
 	token, err := signToken(user.ID)
 	if err != nil {
@@ -322,4 +319,17 @@ func getMe(c *routing.Context) error {
 	out, _ := json.Marshal(map[string]string{"id": user.ID, "email": user.Email})
 	c.Write(out)
 	return nil
+}
+
+// Only these campaign values are supported. Empty means direct; unknown is
+// explicitly unattributed (e.g. an unrecognized campaign captured by the UI).
+func signupSource(source string) (string, bool) {
+	switch source {
+	case "":
+		return "direct", true
+	case "direct", "unknown", "reddit_patientgamers", "backloggd":
+		return source, true
+	default:
+		return "", false
+	}
 }

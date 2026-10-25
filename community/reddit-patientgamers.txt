@@ -1,31 +1,26 @@
-SUBREDDIT: r/patientgamers
-FLAIR: Discussion (or Gaming Tools / Resources if available)
-LINK TO USE: https://gameroom.hdynamic.app/?utm_source=reddit_patientgamers
+COMMUNITY: r/patientgamers
 
---- TITLE ---
-I built a Last.fm-style game scrobbler that unifies Steam, Xbox, and PSN into one profile — free to use
+--- DRAFT TITLE (only if community rules permit) ---
+GameScrobble: a Steam playtime heatmap — looking for feedback
 
 --- BODY ---
-Hey r/patientgamers,
+I'm sharing GameScrobble, a project our team is building to visualize Steam playtime.
+With a linked Steam account and accessible game data, it periodically checks Steam's
+reported playtime. Increases between checks feed a daily heatmap and a public profile
+with top games. It does not record exact session start/end times or reconstruct a
+historical year of daily activity before tracking began.
 
-I'm a patient gamer too and built the tool I always wanted: GameScrobble automatically logs every gaming session from Steam (Xbox and PSN coming), generates a GitHub-style heatmap of your year in games, and gives you a shareable public profile page.
+Try it here: https://gameroom.hdynamic.app/?utm_source=reddit_patientgamers
 
-Why it fits this community:
-- It tracks what you actually play, not just what you own — useful if you have a deep backlog and want to see your real habits vs. your "I'll get to it" list
-- The year-in-games view shows which months you actually gamed, at what intensity, across which titles
-- No manual logging — connects to Steam via the official API and polls for new sessions automatically
+Account signup, the heatmap, and top games are free. Premium features include CSV
+export and additional tracked-game statistics. Payments are currently in Stripe test
+mode; this is a feedback launch, not a paid subscription launch.
 
-It's live now at https://gameroom.hdynamic.app (free to sign up). The shareable profile lives at /u/<your-id> — there's a premium tier ($4.99/mo) for full CSV export and deeper stats, but the heatmap and top games are free.
-
-Stack is open (Go backend + React frontend), running on Render + Neon Postgres. I'm actively working on it and would love beta feedback — especially from people with big backlogs who've tried to track their own gaming before.
-
-Happy to answer questions about how it works or what I'm building next.
+We'd welcome feedback on whether this view helps you understand your playing habits,
+and what information is missing for people working through a backlog.
 
 --- POST NOTES ---
-- Post as text (not a link post) so it appears in the feed naturally
-- Do NOT cross-post this exact text to other subreddits in the same day
-- Reply genuinely to every comment within the first hour to build momentum
-- If r/patientgamers has a "Saturday share" or "self-promotion" thread, use that thread
-  instead of a standalone post to avoid removal for self-promotion
-- Check subreddit rules before posting; r/patientgamers may require minimum account age
-  or karma — post from the hdthronesystem@gmail.com Reddit account (Google sign-in)
+- Check current subreddit rules and obtain moderator permission where required BEFORE posting.
+- Use an approved self-promotion thread if available; do not assume standalone promotion is allowed.
+- Do not post if the rules prohibit this content. Do not cross-post the same text in multiple communities.
+- Use the company account, disclose the team affiliation above, and respond to questions.

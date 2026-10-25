@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	stripe "github.com/stripe/stripe-go/v76"
+	stripe "github.com/stripe/stripe-go/v87"
 )
 
 const e2eAppURL = "https://gameroom.hdynamic.app"
@@ -59,7 +59,7 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatal("could not construct Stripe request")
 		}
 		req.SetBasicAuth(key, "")
-		req.Header.Set("Stripe-Version", "2023-10-16")
+		req.Header.Set("Stripe-Version", stripe.APIVersion)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal("Stripe request failed or timed out (details suppressed)")
@@ -105,7 +105,7 @@ func TestStripeE2E(t *testing.T) {
 			t.Fatal("application request failed or timed out (details suppressed)")
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			t.Fatalf("application request returned HTTP %d", resp.StatusCode)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {

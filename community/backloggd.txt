@@ -1,36 +1,30 @@
-COMMUNITY: Backloggd
-LINK TO USE: https://gameroom.hdynamic.app/?utm_source=backloggd
+COMMUNITY: Backloggd users
 
-Backloggd is a game-logging site (like Letterboxd for games). Their users manually log games.
-GameScrobble is complementary: we auto-track play time from Steam while Backloggd tracks
-what you've played and want to play. The pitch should be additive, not competitive.
+--- SHORT MESSAGE (approved promotion channel only) ---
+Our team is building GameScrobble, a Steam playtime tracker. It periodically checks
+Steam's reported playtime and turns observed increases into a daily heatmap and top-games
+profile. It could complement your manual game log; it doesn't import or sync Backloggd data.
+Try it and tell us what's useful: https://gameroom.hdynamic.app/?utm_source=backloggd
+Signup, the heatmap, and top games are free. Steam game data must be accessible.
 
---- DISCORD MESSAGE (post in #general or #off-topic) ---
-Hey! I built GameScrobble (https://gameroom.hdynamic.app) — it's like Backloggd but auto-tracks
-your actual play time from Steam and generates a heatmap of your year in games. Thought this
-community might dig it since you already care about logging. Free to sign up, would love feedback!
+--- LONGER VERSION ---
+We're looking for feedback from people who enjoy keeping a game log. GameScrobble
+checks linked Steam accounts about every 15 minutes and records observed playtime
+increases. A public profile shows a daily heatmap and top games. This is estimated
+daily activity from polling, not exact session recording, and daily history starts
+when tracking begins. It currently tracks Steam playtime.
 
---- LONGER VERSION (for a forum thread or "show your project" channel) ---
-I've been a Backloggd user for a while and always wanted something that combined manual logging
-with automatic play-time tracking. GameScrobble auto-polls your Steam library every 15 minutes,
-builds a GitHub-style heatmap, and gives you a shareable profile at /u/<your-id>.
+Try it here: https://gameroom.hdynamic.app/?utm_source=backloggd
 
-It's live now: https://gameroom.hdynamic.app
+Signup, heatmaps, and top games are free. CSV export and additional tracked-game
+statistics are Premium features. Payments are currently in Stripe test mode;
+this is a feedback launch, not a paid subscription launch.
 
-The free tier includes the heatmap and top games; premium ($4.99/mo) adds CSV export and
-full stats across all your tracked games.
-
-Would love to hear from Backloggd users about what's useful and what's missing — especially
-around surfacing backlog insights from actual play data.
-
---- CHANNELS TO TARGET ---
-- Backloggd Discord: https://discord.gg/backloggd (join with hdthronesystem@gmail.com Google sign-in)
-  Post in #general-gaming, #show-and-tell, or equivalent self-promotion channel
-- Backloggd Twitter/X: @backloggd — reply to a recent post or quote-tweet mentioning auto-tracking
-- Backloggd subreddit (r/Backloggd if it exists): standard community post
+What would help you compare your manual game log with actual Steam playtime?
 
 --- POST NOTES ---
-- Keep it short in Discord — nobody reads walls of text in chat
-- Don't DM individual Backloggd users without their permission
-- Engage with replies for at least 30 minutes after posting
-- Avoid posting the same message in multiple Discord channels simultaneously
+- Find the community's official channels and check current rules BEFORE posting.
+- Obtain moderator permission where required; use only an approved promotion channel.
+- Do not assume any particular Discord invitation, channel name, or subreddit exists.
+- Do not DM users without permission or duplicate the message across channels.
+- Use the company account and disclose the team affiliation; respond to feedback.

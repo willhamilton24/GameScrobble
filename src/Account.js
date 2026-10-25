@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
+import { signupAttribution } from './attribution';
+
 const sessionKey = 'gamescrobble.token';
 
 export default function Account() {
@@ -44,8 +46,7 @@ export default function Account() {
     try {
       const body = { email, password };
       if (mode === 'register') {
-        const utmSource = new URLSearchParams(window.location.search).get('utm_source');
-        if (utmSource) body.source = utmSource.slice(0, 64);
+        body.source = signupAttribution();
       }
       const response = await fetch(`/auth/${mode}`, {
         method: 'POST',
