@@ -833,8 +833,8 @@ func pollUserPlayHistory(steamID, userID, key string) {
 			}
 		}
 
-		scrobCtx, scrobCancel := context.WithTimeout(context.Background(), dbTimeout)
-		_, err := db.Exec(scrobCtx, `
+		historyCtx, historyCancel := context.WithTimeout(context.Background(), dbTimeout)
+		_, err := db.Exec(historyCtx, `
 			INSERT INTO play_history (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (user_id, app_id) DO UPDATE SET
@@ -844,7 +844,7 @@ func pollUserPlayHistory(steamID, userID, key string) {
 				playtime_recent = $6,
 				last_polled     = $7
 		`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)
-		scrobCancel()
+		historyCancel()
 		if err != nil {
 			log.Printf("play-history poller: upsert error for user %s app %d: %v", userID, appID, err)
 		}
@@ -916,19 +916,19 @@ func main() {
 	//
 
 	router.Get("/api", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 
 	// Game Info Route
 	router.Get("/game/<title>", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 
 	// Search
 	router.Get("/search/<term>", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 
