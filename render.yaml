@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: gamescrobble-api
+    name: gameroom-api
     runtime: go
     plan: free
     buildCommand: npm install && npm run build && go build -o server .

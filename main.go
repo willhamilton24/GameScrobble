@@ -92,8 +92,8 @@ type HeatmapDay struct {
 	Minutes int    `json:"minutes"`
 }
 
-// ScrobbleStat is one entry in the deep-stats response.
-type ScrobbleStat struct {
+// PlayHistoryStat is one entry in the deep-stats response.
+type PlayHistoryStat struct {
 	AppID          int       `json:"app_id"`
 	Name           string    `json:"name"`
 	PlaytimeTotal  int       `json:"playtime_total"`
@@ -466,7 +466,7 @@ func getDeepStats(c *routing.Context) error {
 
 	rows, err := db.Query(ctx, `
 		SELECT app_id, name, playtime_total, playtime_recent, last_polled
-		FROM scrobbles
+		FROM play_history
 		WHERE user_id = $1
 		ORDER BY playtime_total DESC
 	`, userID)
@@ -478,9 +478,9 @@ func getDeepStats(c *routing.Context) error {
 	}
 	defer rows.Close()
 
-	stats := []ScrobbleStat{}
+	stats := []PlayHistoryStat{}
 	for rows.Next() {
-		var s ScrobbleStat
+		var s PlayHistoryStat
 		if err := rows.Scan(&s.AppID, &s.Name, &s.PlaytimeTotal, &s.PlaytimeRecent, &s.LastPolled); err != nil {
 			c.SetStatusCode(500)
 			c.SetContentType("application/json")
@@ -502,7 +502,7 @@ func getDeepStats(c *routing.Context) error {
 	return nil
 }
 
-// exportRow holds one scrobble entry for CSV export.
+// exportRow holds one play-history entry for CSV export.
 type exportRow struct {
 	AppID          int
 	Name           string
@@ -515,7 +515,7 @@ type exportRow struct {
 var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, error) {
 	rows, err := db.Query(ctx, `
 		SELECT app_id, name, playtime_total, playtime_recent, last_polled
-		FROM scrobbles
+		FROM play_history
 		WHERE user_id = $1
 	`, userID)
 	if err != nil {
@@ -536,7 +536,7 @@ var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, e
 	return result, nil
 }
 
-// exportHistory streams a CSV of all scrobbles for a user (premium only).
+// exportHistory streams a CSV of all play history for a user (premium only).
 // Query param: user_id
 func exportHistory(c *routing.Context) error {
 	userID := string(c.QueryArgs().Peek("user_id"))
@@ -566,7 +566,7 @@ func exportHistory(c *routing.Context) error {
 	}
 
 	c.SetContentType("text/csv")
-	c.Response.Header.Set("Content-Disposition", `attachment; filename="gamescrobble_history.csv"`)
+	c.Response.Header.Set("Content-Disposition", `attachment; filename="gameroom_history.csv"`)
 
 	w := csv.NewWriter(c)
 	_ = w.Write([]string{"app_id", "name", "playtime_total_minutes", "playtime_recent_minutes", "last_polled"})
@@ -778,7 +778,7 @@ func serveFrontend(ctx *fasthttp.RequestCtx) {
 // MAIN
 //
 
-func pollUserScrobbles(steamID, userID, key string) {
+func pollUserPlayHistory(steamID, userID, key string) {
 	query := url.Values{}
 	query.Set("key", key)
 	query.Set("steamid", steamID)
@@ -786,13 +786,13 @@ func pollUserScrobbles(steamID, userID, key string) {
 	query.Set("format", "json")
 	resp, err := steamGet("/IPlayerService/GetRecentlyPlayedGames/v0001/?" + query.Encode())
 	if err != nil {
-		log.Printf("scrobble poller: Steam API error for %s: %v", steamID, err)
+		log.Printf("play-history poller: Steam API error for %s: %v", steamID, err)
 		return
 	}
 
 	v, err := fastjson.ParseBytes(resp)
 	if err != nil {
-		log.Printf("scrobble poller: parse error for %s: %v", steamID, err)
+		log.Printf("play-history poller: parse error for %s: %v", steamID, err)
 		return
 	}
 
@@ -813,7 +813,7 @@ func pollUserScrobbles(steamID, userID, key string) {
 		findCtx, findCancel := context.WithTimeout(context.Background(), dbTimeout)
 		var oldPT int
 		findErr := db.QueryRow(findCtx, `
-			SELECT playtime_total FROM scrobbles WHERE user_id = $1 AND app_id = $2
+			SELECT playtime_total FROM play_history WHERE user_id = $1 AND app_id = $2
 		`, userID, appID).Scan(&oldPT)
 		findCancel()
 		if findErr == nil {
@@ -828,14 +828,14 @@ func pollUserScrobbles(steamID, userID, key string) {
 				`, userID, appID, name, now.Format("2006-01-02"), delta)
 				actCancel()
 				if actErr != nil {
-					log.Printf("scrobble poller: activity upsert error for user %s app %d: %v", userID, appID, actErr)
+					log.Printf("play-history poller: activity upsert error for user %s app %d: %v", userID, appID, actErr)
 				}
 			}
 		}
 
-		scrobCtx, scrobCancel := context.WithTimeout(context.Background(), dbTimeout)
-		_, err := db.Exec(scrobCtx, `
-			INSERT INTO scrobbles (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
+		historyCtx, historyCancel := context.WithTimeout(context.Background(), dbTimeout)
+		_, err := db.Exec(historyCtx, `
+			INSERT INTO play_history (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (user_id, app_id) DO UPDATE SET
 				steam_id        = $2,
@@ -844,17 +844,17 @@ func pollUserScrobbles(steamID, userID, key string) {
 				playtime_recent = $6,
 				last_polled     = $7
 		`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)
-		scrobCancel()
+		historyCancel()
 		if err != nil {
-			log.Printf("scrobble poller: upsert error for user %s app %d: %v", userID, appID, err)
+			log.Printf("play-history poller: upsert error for user %s app %d: %v", userID, appID, err)
 		}
 	}
 }
 
-func pollScrobbles() {
+func pollPlayHistory() {
 	key := steamAPIKey()
 	if key == "" {
-		log.Println("scrobble poller: STEAM_API_KEY not set, skipping")
+		log.Println("play-history poller: STEAM_API_KEY not set, skipping")
 		return
 	}
 
@@ -863,7 +863,7 @@ func pollScrobbles() {
 
 	rows, err := db.Query(ctx, `SELECT user_id, steam_id FROM steam_links`)
 	if err != nil {
-		log.Println("scrobble poller: failed to fetch steam_links:", err)
+		log.Println("play-history poller: failed to fetch steam_links:", err)
 		return
 	}
 	defer rows.Close()
@@ -872,28 +872,28 @@ func pollScrobbles() {
 	for rows.Next() {
 		var l SteamLink
 		if err := rows.Scan(&l.UserID, &l.SteamID); err != nil {
-			log.Println("scrobble poller: failed to scan steam_links:", err)
+			log.Println("play-history poller: failed to scan steam_links:", err)
 			return
 		}
 		links = append(links, l)
 	}
 	if err := rows.Err(); err != nil {
-		log.Println("scrobble poller: failed to iterate steam_links:", err)
+		log.Println("play-history poller: failed to iterate steam_links:", err)
 		return
 	}
 	rows.Close()
 
 	for _, link := range links {
-		pollUserScrobbles(link.SteamID, link.UserID, key)
+		pollUserPlayHistory(link.SteamID, link.UserID, key)
 	}
 }
 
-func startScrobblePoller() {
+func startPlayHistoryPoller() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
-	pollScrobbles()
+	pollPlayHistory()
 	for range ticker.C {
-		pollScrobbles()
+		pollPlayHistory()
 	}
 }
 
@@ -909,26 +909,26 @@ func main() {
 	router := routing.New()
 
 	go scrapeSteam(5000)
-	go startScrobblePoller()
+	go startPlayHistoryPoller()
 
 	//
 	// API
 	//
 
 	router.Get("/api", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 
 	// Game Info Route
 	router.Get("/game/<title>", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 
 	// Search
 	router.Get("/search/<term>", func(c *routing.Context) error {
-		fmt.Fprintf(c, "Gamium API v1.0.0")
+		fmt.Fprintf(c, "gameroom API v1.0.0")
 		return nil
 	})
 

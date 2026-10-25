@@ -158,7 +158,7 @@ func TestPublicProfileTotalsFailure(t *testing.T) {
 		t.Fatal("totals failure did not stop and close queries")
 	}
 }
-func TestPollScrobblesAbortsOnLinkFailures(t *testing.T) {
+func TestPollPlayHistoryAbortsOnLinkFailures(t *testing.T) {
 	t.Setenv("STEAM_API_KEY", "test-placeholder")
 	oldHTTP := steamHTTPGet
 	t.Cleanup(func() { steamHTTPGet = oldHTTP })
@@ -174,7 +174,7 @@ func TestPollScrobblesAbortsOnLinkFailures(t *testing.T) {
 			oldOutput := log.Writer()
 			log.SetOutput(&logs)
 			t.Cleanup(func() { log.SetOutput(oldOutput) })
-			pollScrobbles()
+			pollPlayHistory()
 			if !strings.Contains(logs.String(), errQueryTest.Error()) {
 				t.Fatalf("missing error log: %s", logs.String())
 			}

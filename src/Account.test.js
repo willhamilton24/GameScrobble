@@ -35,27 +35,27 @@ it('signs up, restores the account after reload, logs out, and logs back in', as
   await submit();
   expect(fetch.mock.calls[0][0]).toBe('/auth/register');
   expect(root.textContent).toContain(`Signed in as ${account.email}`);
-  expect(localStorage.getItem('gamescrobble.token')).toBe('test-token');
+  expect(localStorage.getItem('gameroom.token')).toBe('test-token');
   act(() => { ReactDOM.unmountComponentAtNode(root); });
   fetch.mockImplementationOnce(() => response(account));
   await render();
   expect(fetch.mock.calls[1]).toEqual(['/auth/me', { headers: { Authorization: 'Bearer test-token' } }]);
   expect(root.textContent).toContain(account.email);
   act(() => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Log out')); });
-  expect(localStorage.getItem('gamescrobble.token')).toBe(null);
+  expect(localStorage.getItem('gameroom.token')).toBe(null);
   expect(root.textContent).not.toContain('Signed in as');
   fetch.mockImplementationOnce(() => response({ token: 'new-test-token', user: account }));
   await submit();
   expect(fetch.mock.calls[2][0]).toBe('/auth/login');
   expect(root.textContent).toContain(account.email);
-  expect(localStorage.getItem('gamescrobble.token')).toBe('new-test-token');
+  expect(localStorage.getItem('gameroom.token')).toBe('new-test-token');
 });
 
 it('discards an expired session and displays authentication errors', async () => {
-  localStorage.setItem('gamescrobble.token', 'expired-test-token');
+  localStorage.setItem('gameroom.token', 'expired-test-token');
   fetch.mockImplementationOnce(() => response({ error: 'invalid or expired token' }, 401));
   await render();
-  expect(localStorage.getItem('gamescrobble.token')).toBe(null);
+  expect(localStorage.getItem('gameroom.token')).toBe(null);
   fetch.mockImplementationOnce(() => response({ error: 'email already registered' }, 409));
   await submit();
   expect(root.querySelector('[role=alert]').textContent).toBe('email already registered');

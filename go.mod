@@ -1,4 +1,4 @@
-module gamescrobble
+module gameroom
 
 go 1.26.5
 
