@@ -1,0 +1,10 @@
+.premium-stats { margin-top: 1.5rem; border-top: 1px solid #334155; padding-top: 1rem; text-align: left; min-width: 0; }
+.premium-stats h3 { color: #e2e8f0; }
+.premium-stats .stats-total { color: #e2e8f0; font-size: 1.35rem; }
+.stats-table-scroll { max-width: 100%; overflow-x: auto; margin-top: 1rem; }
+.premium-stats table { width: 100%; border-collapse: collapse; color: #e2e8f0; font-size: 0.9rem; }
+.premium-stats caption { text-align: left; color: #94a3b8; padding-bottom: 0.5rem; }
+.premium-stats th, .premium-stats td { padding: 0.6rem; border-bottom: 1px solid #334155; text-align: left; }
+.premium-stats td { white-space: nowrap; }
+.premium-stats th[scope="row"] { min-width: 8rem; overflow-wrap: anywhere; }
+.premium-stats th button { font-size: inherit; margin: 0; }

@@ -1,0 +1,11 @@
+{
+  "populated": {
+    "stats": [
+      { "app_id": 101, "name": "Amber Valley", "playtime_total": 65, "playtime_recent": 5, "last_polled": "2026-10-23T10:00:00Z" },
+      { "app_id": 202, "name": "Zenith", "playtime_total": 1200, "playtime_recent": 0, "last_polled": "2026-10-24T10:00:00Z" },
+      { "app_id": 303, "name": "Moon Harbor", "playtime_total": 0, "playtime_recent": 0, "last_polled": "2026-10-22T10:00:00Z" }
+    ]
+  },
+  "empty": { "stats": [] },
+  "free": { "error": "premium subscription required", "upgrade_url": "/api/stripe/checkout" }
+}

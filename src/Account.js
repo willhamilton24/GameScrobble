@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 
+import PremiumStats from './PremiumStats';
+
 import { signupAttribution } from './attribution';
 
 const sessionKey = 'gameroom.token';
 
 export default function Account() {
   const [user, setUser] = useState(null);
+  const [showStats, setShowStats] = useState(false);
   const [mode, setMode] = useState('register');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
@@ -69,6 +72,7 @@ export default function Account() {
     try {
       localStorage.removeItem(sessionKey);
       setUser(null);
+      setShowStats(false);
       setError('');
       setMode('login');
     } catch (err) {
@@ -105,6 +109,12 @@ export default function Account() {
           <p><a href={`/u/export?user_id=${encodeURIComponent(user.id)}`}>Export history (Premium)</a></p>
           <button type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
           <button type="button" disabled={busy} onClick={logout}>Log out</button>
+          <button type="button" aria-expanded={showStats} aria-controls="account-stats" onClick={() => setShowStats(!showStats)}>
+            {showStats ? 'Hide Premium stats' : 'View Premium stats'}
+          </button>
+          <div id="account-stats">
+            {showStats && <PremiumStats key={user.id} userId={user.id} token={localStorage.getItem(sessionKey)} onUpgrade={checkout} busy={busy} />}
+          </div>
         </div>
       ) : (
         <form onSubmit={authenticate}>
