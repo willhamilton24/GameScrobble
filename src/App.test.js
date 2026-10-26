@@ -7,7 +7,7 @@ it('renders the gameroom home page', () => {
   ReactDOM.render(<App />, div);
   expect(div.querySelector('h1').textContent).toBe('gameroom');
   expect(div.querySelector('p').textContent).toBe(
-    'Unified play-history tracking across Steam, Xbox, PSN, and Epic.'
+    'Explore your Steam playtime with a public profile and daily heatmap.'
   );
   ReactDOM.unmountComponentAtNode(div);
 });
