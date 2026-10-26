@@ -81,7 +81,7 @@ it('opens stats for the signed-in account and removes them on logout', async () 
   await act(async () => {
     Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'View Premium stats'));
   });
-  expect(fetch.mock.calls[1]).toEqual([`/u/stats?user_id=${account.id}`, {
+  expect(fetch.mock.calls[1]).toEqual(['/u/stats', {
     headers: { Authorization: 'Bearer fixture-token' }, cache: 'no-store'
   }]);
   expect(root.textContent).toContain('No game stats yet');

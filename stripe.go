@@ -306,6 +306,22 @@ func deactivatePremiumByCustomer(stripeCustomerID string) error {
 	return err
 }
 
+// getPremiumStatus returns the authenticated user's current premium entitlement.
+func getPremiumStatus(c *routing.Context) error {
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to check premium status"}`)
+		return nil
+	}
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]interface{}{"premium": ok, "user_id": userID})
+	c.Write(out)
+	return nil
+}
+
 // isPremium returns true when the user has an active premium subscription.
 func isPremium(ctx context.Context, userID string) (bool, error) {
 	c, cancel := context.WithTimeout(ctx, dbTimeout)
