@@ -813,46 +813,69 @@ func pollUserPlayHistory(steamID, userID, key string) {
 		playtimeTotal := g.GetInt("playtime_forever")
 		playtimeRecent := g.GetInt("playtime_2weeks")
 
-		// Record daily playtime delta for the public-profile heatmap.
-		findCtx, findCancel := context.WithTimeout(context.Background(), dbTimeout)
-		var oldPT int
-		findErr := db.QueryRow(findCtx, `
-			SELECT playtime_total FROM play_history WHERE user_id = $1 AND app_id = $2
-		`, userID, appID).Scan(&oldPT)
-		findCancel()
-		if findErr == nil {
-			if delta := playtimeTotal - oldPT; delta > 0 {
-				actCtx, actCancel := context.WithTimeout(context.Background(), dbTimeout)
-				_, actErr := db.Exec(actCtx, `
-					INSERT INTO play_activity (user_id, app_id, name, date, minutes)
-					VALUES ($1, $2, $3, $4, $5)
-					ON CONFLICT (user_id, app_id, date) DO UPDATE SET
-						minutes = play_activity.minutes + $5,
-						name    = $3
-				`, userID, appID, name, now.Format("2006-01-02"), delta)
-				actCancel()
-				if actErr != nil {
-					log.Printf("play-history poller: activity upsert error for user %s app %d: %v", userID, appID, actErr)
-				}
-			}
-		}
-
-		historyCtx, historyCancel := context.WithTimeout(context.Background(), dbTimeout)
-		_, err := db.Exec(historyCtx, `
-			INSERT INTO play_history (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (user_id, app_id) DO UPDATE SET
-				steam_id        = $2,
-				name            = $4,
-				playtime_total  = $5,
-				playtime_recent = $6,
-				last_polled     = $7
-		`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)
-		historyCancel()
-		if err != nil {
-			log.Printf("play-history poller: upsert error for user %s app %d: %v", userID, appID, err)
+		if err := recordGameActivity(userID, steamID, appID, name, playtimeTotal, playtimeRecent, now); err != nil {
+			log.Printf("play-history poller: transaction error for user %s app %d: %v", userID, appID, err)
 		}
 	}
+}
+
+// recordGameActivity reads the prior playtime baseline, records any positive
+// daily delta in play_activity, and advances the baseline in play_history — all
+// in one Postgres transaction. SELECT … FOR UPDATE serialises concurrent polls
+// for the same (user_id, app_id) row so only one transaction computes the delta
+// at a time. If the activity write fails the transaction rolls back, leaving the
+// baseline unchanged so the minutes are not lost on the next poll.
+func recordGameActivity(userID, steamID string, appID int, name string, playtimeTotal, playtimeRecent int, now time.Time) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	tx, err := dbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit; rolls back on any error return
+
+	var oldPT int
+	scanErr := tx.QueryRow(ctx, `
+		SELECT playtime_total FROM play_history WHERE user_id = $1 AND app_id = $2
+		FOR UPDATE
+	`, userID, appID).Scan(&oldPT)
+
+	if scanErr != nil && !errors.Is(scanErr, pgx.ErrNoRows) {
+		return scanErr
+	}
+
+	// Record a daily delta only when we have a prior baseline (not first observation).
+	if scanErr == nil {
+		if delta := playtimeTotal - oldPT; delta > 0 {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO play_activity (user_id, app_id, name, date, minutes)
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (user_id, app_id, date) DO UPDATE SET
+					minutes = play_activity.minutes + $5,
+					name    = $3
+			`, userID, appID, name, now.Format("2006-01-02"), delta)
+			if err != nil {
+				return err // deferred Rollback fires; baseline is not advanced
+			}
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO play_history (user_id, steam_id, app_id, name, playtime_total, playtime_recent, last_polled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (user_id, app_id) DO UPDATE SET
+			steam_id        = $2,
+			name            = $4,
+			playtime_total  = $5,
+			playtime_recent = $6,
+			last_polled     = $7
+	`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func pollPlayHistory() {
