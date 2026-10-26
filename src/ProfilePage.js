@@ -115,13 +115,27 @@ function GameCard({ game }) {
 function ProfilePage({ userId }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [errorType, setErrorType] = useState(null); // 'not-found' | 'error'
+  const [fetchKey, setFetchKey] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [showUrl, setShowUrl] = useState(false);
 
   useEffect(function() {
+    setLoading(true);
+    setErrorType(null);
+    setProfile(null);
     fetch('/u/' + userId + '/profile')
       .then(function(r) {
-        if (!r.ok) throw new Error('Profile not found');
+        if (r.status === 404) {
+          var err = new Error('not-found');
+          err.type = 'not-found';
+          throw err;
+        }
+        if (!r.ok) {
+          var err2 = new Error('error');
+          err2.type = 'error';
+          throw err2;
+        }
         return r.json();
       })
       .then(function(data) {
@@ -129,24 +143,33 @@ function ProfilePage({ userId }) {
         setLoading(false);
       })
       .catch(function(err) {
-        setError(err.message);
+        setErrorType(err.type || 'error');
         setLoading(false);
       });
-  }, [userId]);
+  }, [userId, fetchKey]);
+
+  function handleRetry() {
+    setFetchKey(function(k) { return k + 1; });
+  }
 
   function handleShare() {
+    var url = window.location.href;
     if (navigator.clipboard) {
-      navigator.clipboard.writeText(window.location.href).then(function() {
+      navigator.clipboard.writeText(url).then(function() {
         setCopied(true);
         setTimeout(function() { setCopied(false); }, 2000);
+      }).catch(function() {
+        setShowUrl(true);
       });
+    } else {
+      setShowUrl(true);
     }
   }
 
   if (loading) {
-    return <div className="profile-state">Loading...</div>;
+    return <div className="profile-state" role="status">Loading...</div>;
   }
-  if (error) {
+  if (errorType === 'not-found') {
     return (
       <div className="profile-state">
         <h2>No profile found</h2>
@@ -154,6 +177,17 @@ function ProfilePage({ userId }) {
         <a href="/" className="cta-btn" style={{ marginTop: '1.5rem', display: 'inline-block' }}>
           Get gameroom
         </a>
+      </div>
+    );
+  }
+  if (errorType === 'error') {
+    return (
+      <div className="profile-state" role="alert">
+        <h2>Something went wrong</h2>
+        <p>The profile couldn&rsquo;t be loaded right now.</p>
+        <button className="cta-btn" style={{ marginTop: '1.5rem', border: 'none', cursor: 'pointer' }} onClick={handleRetry}>
+          Retry
+        </button>
       </div>
     );
   }
@@ -167,9 +201,21 @@ function ProfilePage({ userId }) {
           <div className="profile-id">{userId}</div>
           <span className="year-badge">{profile.year} in games</span>
         </div>
-        <button className="share-btn" onClick={handleShare}>
-          {copied ? '✓ Copied' : 'Share'}
-        </button>
+        <div className="share-wrap">
+          <button className="share-btn" onClick={handleShare}>
+            {copied ? '✓ Copied' : 'Share'}
+          </button>
+          {showUrl && (
+            <input
+              className="share-url"
+              readOnly
+              value={window.location.href}
+              onFocus={function(e) { e.target.select(); }}
+              aria-label="Profile URL"
+              autoFocus
+            />
+          )}
+        </div>
       </header>
 
       <section className="stats-bar">
