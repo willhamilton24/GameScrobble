@@ -7,48 +7,32 @@ import './App.css';
 const SESSION_KEY = 'gameroom.token';
 
 // PremiumSuccess — /premium/success
-// Polls the server (up to _maxPolls times) to confirm activation. The Stripe
-// session_id in the URL is shown for reference only; it is never used to unlock.
+// Polls GET /api/premium/status (up to _maxPolls times) to confirm server-side
+// activation. The Stripe session_id in the URL is never used to grant access.
 export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
   const [phase, setPhase] = useState('loading'); // loading|pending|active|timed_out|error|unauthenticated
   const [userId, setUserId] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Step 1: resolve session → user ID
   useEffect(() => {
-    let mounted = true;
-    async function init() {
-      const token = localStorage.getItem(SESSION_KEY);
-      if (!token) { if (mounted) setPhase('unauthenticated'); return; }
-      try {
-        const r = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-        if (!r.ok) { if (mounted) setPhase('unauthenticated'); return; }
-        const user = await r.json();
-        if (mounted) setUserId(user.id);
-      } catch (err) {
-        if (mounted) { setErrorMsg(err.message); setPhase('error'); }
-      }
-    }
-    init();
-    return () => { mounted = false; };
-  }, []);
-
-  // Step 2: poll /api/premium/status once userId is known
-  useEffect(() => {
-    if (!userId) return;
+    const token = localStorage.getItem(SESSION_KEY);
+    if (!token) { setPhase('unauthenticated'); return; }
     let aborted = false;
     let timer = null;
 
     async function check(attempt) {
       if (aborted) return;
-      const token = localStorage.getItem(SESSION_KEY);
       try {
-        const r = await fetch('/api/premium/status', { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetch('/api/premium/status', {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
         if (aborted) return;
         if (!r.ok) { setErrorMsg('Could not verify premium status.'); setPhase('error'); return; }
         const data = await r.json();
         if (aborted) return;
-        if (data.active) {
+        if (data.premium) {
+          setUserId(data.user_id || null);
           setPhase('active');
         } else if (attempt + 1 >= _maxPolls) {
           setPhase('timed_out');
@@ -65,7 +49,7 @@ export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
 
     check(0);
     return () => { aborted = true; clearTimeout(timer); };
-  }, [userId, _maxPolls, _pollIntervalMs]);
+  }, [_maxPolls, _pollIntervalMs]);
 
   if (phase === 'unauthenticated') {
     return (

@@ -294,26 +294,6 @@ func extendPremium(stripeCustomerID, userID string, periodEnd time.Time) error {
 	return err
 }
 
-// getPremiumStatus returns the authenticated user's server-verified premium entitlement.
-// The user is derived from the Bearer token set by authMiddleware — the URL is never trusted.
-func getPremiumStatus(c *routing.Context) error {
-	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
-
-	active, err := premiums.checkPremium(c.RequestCtx, userID)
-	if err != nil {
-		log.Printf("premium status: checkPremium error for %s: %v", userID, err)
-		c.SetStatusCode(500)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"failed to check premium status"}`)
-		return nil
-	}
-
-	c.SetContentType("application/json")
-	out, _ := json.Marshal(map[string]bool{"active": active})
-	c.Write(out)
-	return nil
-}
-
 // deactivatePremiumByCustomer expires the premium entitlement when a subscription is cancelled.
 func deactivatePremiumByCustomer(stripeCustomerID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
@@ -324,6 +304,22 @@ func deactivatePremiumByCustomer(stripeCustomerID string) error {
 		stripeCustomerID,
 	)
 	return err
+}
+
+// getPremiumStatus returns the authenticated user's current premium entitlement.
+func getPremiumStatus(c *routing.Context) error {
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
+	ok, err := premiums.checkPremium(c.RequestCtx, userID)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to check premium status"}`)
+		return nil
+	}
+	c.SetContentType("application/json")
+	out, _ := json.Marshal(map[string]interface{}{"premium": ok, "user_id": userID})
+	c.Write(out)
+	return nil
 }
 
 // isPremium returns true when the user has an active premium subscription.

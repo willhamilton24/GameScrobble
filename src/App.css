@@ -232,6 +232,24 @@ p {
   margin: 0.5rem;
 }
 
+/* ── Premium success / cancel screens ─────────────────────────── */
+
+.premium-screen {
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: center;
+  display: grid;
+  gap: 1rem;
+}
+
+.premium-screen h1 {
+  margin-bottom: 0;
+}
+
+.premium-screen .compare-btn {
+  justify-self: center;
+}
+
 /* Let wide sample content scroll locally, without sizing the page's grid. */
 main > *, .sample-demo *, .account fieldset { min-width: 0; }
 .hero-wrap { width: 100%; }

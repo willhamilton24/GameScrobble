@@ -964,8 +964,6 @@ func main() {
 	router.Post("/api/stripe/webhook", func(c *routing.Context) error {
 		return handleStripeWebhook(c)
 	})
-
-	// Premium entitlement check (authenticated; used by /premium/success to verify activation)
 	router.Get("/api/premium/status", func(c *routing.Context) error {
 		if !authMiddleware(c) {
 			return nil
