@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ProfilePage from './ProfilePage';
 import Account from './Account';
 import SampleProfile from './SampleProfile';
@@ -8,59 +8,48 @@ const COMPARE_ROWS = [
   { feature: 'Public profile & shareable URL',    free: true,  premium: true },
   { feature: 'Year-in-games activity heatmap',    free: true,  premium: true },
   { feature: 'Total hours, games & top game',     free: true,  premium: true },
-  { feature: 'Full history CSV export',           free: false, premium: true },
-  { feature: 'All-time playtime totals',          free: false, premium: true },
-  { feature: 'Sortable game library',             free: false, premium: true },
-  { feature: 'Priority sync',                     free: false, premium: true },
+  { feature: 'Per-game snapshot CSV export',           free: false, premium: true },
 ];
 
-function FeatureComparison() {
-  function scrollToSignup(e) {
-    e.preventDefault();
-    var el = document.getElementById('get-started');
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
-  }
-
+function FeatureComparison({ user, onPremium }) {
   return (
     <div className="feature-compare">
-      <h2 className="compare-title">Free vs Premium</h2>
-      <div className="compare-table">
-        <div className="compare-header">
-          <div className="compare-feature-col"></div>
-          <div className="compare-tier-col">Free</div>
-          <div className="compare-tier-col compare-tier-premium">Premium</div>
-        </div>
-        {COMPARE_ROWS.map(function(row, i) {
-          return (
-            <div key={i} className="compare-row">
-              <div className="compare-feature-col">{row.feature}</div>
-              <div className="compare-tier-col">
-                {row.free
-                  ? <span className="compare-check">&#10003;</span>
-                  : <span className="compare-dash">&mdash;</span>}
-              </div>
-              <div className="compare-tier-col">
-                {row.premium
-                  ? <span className="compare-check compare-check--premium">&#10003;</span>
-                  : <span className="compare-dash">&mdash;</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <h2 className="compare-title" id="compare-title">Free vs Premium</h2>
+      <table className="compare-table" aria-labelledby="compare-title">
+        <thead><tr className="compare-header">
+          <th scope="col">Feature</th>
+          <th scope="col">Free</th>
+          <th scope="col" className="compare-tier-premium">Premium</th>
+        </tr></thead>
+        <tbody>{COMPARE_ROWS.map(row => (
+          <tr key={row.feature} className="compare-row">
+            <th scope="row">{row.feature}</th>
+            {[row.free, row.premium].map((included, i) => (
+              <td key={i} className="compare-tier-col">
+                <span aria-label={included ? 'Included' : 'Not included'}
+                  className={included ? 'compare-check' : 'compare-dash'}>
+                  <span aria-hidden="true">{included ? '✓' : '—'}</span>
+                </span>
+              </td>
+            ))}
+          </tr>
+        ))}</tbody>
+      </table>
       <div className="compare-ctas">
-        <a href="#get-started" className="compare-btn compare-btn--free" onClick={scrollToSignup}>
-          Get started free
+        <a href="#get-started" className="compare-btn compare-btn--free">
+          {user ? 'Go to your account' : 'Get started free'}
         </a>
-        <a href="#get-started" className="compare-btn compare-btn--premium" onClick={scrollToSignup}>
-          Sign up to unlock Premium
-        </a>
+        <button type="button" className="compare-btn compare-btn--premium" onClick={onPremium}>
+          {user ? 'Go to Premium checkout' : 'Sign up to continue to Premium checkout'}
+        </button>
       </div>
     </div>
   );
 }
 
 function Home() {
+  const [user, setUser] = useState(null);
+  const [premiumRequest, setPremiumRequest] = useState(0);
   return (
     <main>
       <div className="hero-wrap">
@@ -68,11 +57,11 @@ function Home() {
         <p>Explore your Steam playtime with a public profile and daily heatmap.</p>
         <p className="tagline">See playtime changes observed since tracking began.</p>
         <div id="get-started">
-          <Account />
+          <Account onUserChange={setUser} premiumRequest={premiumRequest} />
         </div>
       </div>
       <SampleProfile />
-      <FeatureComparison />
+      <FeatureComparison user={user} onPremium={() => setPremiumRequest(value => value + 1)} />
     </main>
   );
 }

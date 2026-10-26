@@ -28,3 +28,12 @@ Used a new local PostgreSQL 15 cluster with trust authentication on a private te
 The first temporary feature-harness attempt failed because its manually constructed fasthttp context lacked server initialization. That attempt is **not** counted as feature coverage. The harness was corrected to use RequestCtx.Init, all three databases were recreated, and the startup checks plus full uncached Go suite/harness then passed. The temporary harness was removed from the repository after execution; no machine-specific test paths were added to the test suite.
 
 Local evidence and harnesses: `/tmp/gameroom-review.X8AsuI/` (`check_startup.py`, `startup-results.log`, `review_postgres_qa_test.go`, `go-tests.log` for the failed attempt, `go-tests-rerun.log` for the successful rerun). Application children were stopped via their own subprocess handles; the disposable database server was stopped by its recorded launch PID. No git/gh commands, commits, merges, or deployments were performed.
+
+## PR #77 landing-page review fixes — 2026-10-25
+
+- Sample reporting period is January 1–December 31, 2026 UTC. A deterministic fictional record set drives all totals, rankings, heatmap cells, and the five-row CSV excerpt. CSV uses the endpoint's column names and UTC timestamp format and describes per-game snapshots.
+- Removed Priority sync, Sortable game library, and All-time playtime totals from Premium marketing. Premium intent reuses Account authentication and focuses its existing checkout control; no automatic payment request occurs on signup.
+- Regression checks: `TZ=UTC CI=true npm test -- --watch=false --runInBand` and `TZ=America/New_York CI=true npm test -- --watch=false --runInBand`: 5 suites, 14 tests passed in each. Coverage includes four clocks in 2027/2028, a shared fixture fingerprint across timezones, 365 rendered dates, fixture aggregates, anonymous signup and restored-session CTA paths, and the existing checkout request.
+- `npm run build`: passed; existing dependency deprecation/outdated Browserslist notices remain.
+- Built-page Chromium inspection at 1440px and 375px: page scroll width equals viewport width. At 375px, heatmap and CSV containers are 325px wide with independently scrollable content (737px and 530px); both scrollLeft values reached 100. Desktop content fits. Full-page screenshots inspected for both widths.
+- No git/gh, merge, deployment, live accounts, or payments used.

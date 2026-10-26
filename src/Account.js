@@ -4,7 +4,7 @@ import { signupAttribution } from './attribution';
 
 const sessionKey = 'gameroom.token';
 
-export default function Account() {
+export default function Account({ onUserChange, premiumRequest = 0 }) {
   const [user, setUser] = useState(null);
   const [mode, setMode] = useState('register');
   const [busy, setBusy] = useState(true);
@@ -35,6 +35,20 @@ export default function Account() {
     restore();
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (onUserChange) onUserChange(user);
+  }, [user, onUserChange]);
+
+  useEffect(() => {
+    if (!premiumRequest || busy) return;
+    if (!user) setMode('register');
+    const target = document.getElementById(user ? 'premium-checkout' : 'account-email');
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.focus({ preventScroll: true });
+    }
+  }, [premiumRequest, user, busy]);
 
   async function authenticate(event) {
     event.preventDefault();
@@ -97,13 +111,14 @@ export default function Account() {
   return (
     <section className="account" aria-label="Your account">
       <h2>{user ? 'Your account' : mode === 'register' ? 'Create your account' : 'Log in'}</h2>
+      {premiumRequest > 0 && !user && <p>Create your account, then use Upgrade to Premium to continue to checkout.</p>}
       {error && <p role="alert">{error}</p>}
       {user ? (
         <div>
           <p>Signed in as {user.email}</p>
           <p><a href={`/u/${encodeURIComponent(user.id)}`}>View your profile</a></p>
-          <p><a href={`/u/export?user_id=${encodeURIComponent(user.id)}`}>Export history (Premium)</a></p>
-          <button type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
+          <p><a href={`/u/export?user_id=${encodeURIComponent(user.id)}`}>Export game snapshots (Premium)</a></p>
+          <button id="premium-checkout" type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
           <button type="button" disabled={busy} onClick={logout}>Log out</button>
         </div>
       ) : (

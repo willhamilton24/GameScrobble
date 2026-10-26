@@ -152,29 +152,12 @@ p {
   margin-bottom: 2rem;
 }
 
-.compare-header,
-.compare-row {
-  display: grid;
-  grid-template-columns: 1fr 80px 110px;
-  align-items: center;
-}
-
-.compare-header {
-  background: #0d0d1a;
-  padding: 0.6rem 1.25rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #475569;
-}
-
-.compare-row {
-  padding: 0.75rem 1.25rem;
-  border-top: 1px solid #1e2035;
-  font-size: 0.875rem;
-  color: #94a3b8;
-}
+.compare-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.compare-table th, .compare-table td { padding: 0.75rem 0.5rem; overflow-wrap: anywhere; }
+.compare-table th:first-child { width: 50%; text-align: left; }
+.compare-header { background: #0d0d1a; color: #94a3b8; font-size: 0.8rem; }
+.compare-row { border-top: 1px solid #1e2035; color: #94a3b8; font-size: 0.875rem; }
+.compare-row th { font-weight: 400; }
 
 .compare-tier-col {
   text-align: center;
@@ -233,4 +216,18 @@ p {
   background: #00d4ff;
   border: 1px solid #00d4ff;
   color: #0d0d1a;
+}
+
+/* Let wide sample content scroll locally, without sizing the page's grid. */
+main > *, .sample-demo *, .account fieldset { min-width: 0; }
+.hero-wrap { width: 100%; }
+.sample-demo .heatmap-card, .csv-preview { box-sizing: border-box; max-width: 100%; }
+.sample-demo .stat-card { padding: 1.25rem 1rem; }
+.sample-demo .stat-value { overflow-wrap: anywhere; }
+.compare-btn { box-sizing: border-box; max-width: 100%; }
+.sample-period { margin-bottom: 1.5rem; font-size: 0.9rem; }
+.compare-header th { white-space: nowrap; }
+@media (max-width: 400px) {
+  .compare-table th, .compare-table td { padding-left: 0.35rem; padding-right: 0.35rem; }
+  .compare-header { font-size: 0.75rem; }
 }
