@@ -218,6 +218,20 @@ p {
   color: #0d0d1a;
 }
 
+/* ── Premium success / cancel screens ────────────────────────── */
+
+.premium-screen {
+  max-width: 480px;
+  margin: 0 auto;
+  text-align: center;
+  padding-top: 2rem;
+}
+
+.premium-screen .compare-btn {
+  display: inline-block;
+  margin: 0.5rem;
+}
+
 /* Let wide sample content scroll locally, without sizing the page's grid. */
 main > *, .sample-demo *, .account fieldset { min-width: 0; }
 .hero-wrap { width: 100%; }

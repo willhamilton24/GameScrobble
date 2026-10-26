@@ -965,6 +965,14 @@ func main() {
 		return handleStripeWebhook(c)
 	})
 
+	// Premium entitlement check (authenticated; used by /premium/success to verify activation)
+	router.Get("/api/premium/status", func(c *routing.Context) error {
+		if !authMiddleware(c) {
+			return nil
+		}
+		return getPremiumStatus(c)
+	})
+
 	// Premium-gated endpoints
 	router.Get("/u/stats", func(c *routing.Context) error {
 		return getDeepStats(c)

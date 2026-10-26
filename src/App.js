@@ -1,8 +1,146 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ProfilePage from './ProfilePage';
 import Account from './Account';
 import SampleProfile from './SampleProfile';
 import './App.css';
+
+const SESSION_KEY = 'gameroom.token';
+
+// PremiumSuccess — /premium/success
+// Polls the server (up to _maxPolls times) to confirm activation. The Stripe
+// session_id in the URL is shown for reference only; it is never used to unlock.
+export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
+  const [phase, setPhase] = useState('loading'); // loading|pending|active|timed_out|error|unauthenticated
+  const [userId, setUserId] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Step 1: resolve session → user ID
+  useEffect(() => {
+    let mounted = true;
+    async function init() {
+      const token = localStorage.getItem(SESSION_KEY);
+      if (!token) { if (mounted) setPhase('unauthenticated'); return; }
+      try {
+        const r = await fetch('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) { if (mounted) setPhase('unauthenticated'); return; }
+        const user = await r.json();
+        if (mounted) setUserId(user.id);
+      } catch (err) {
+        if (mounted) { setErrorMsg(err.message); setPhase('error'); }
+      }
+    }
+    init();
+    return () => { mounted = false; };
+  }, []);
+
+  // Step 2: poll /api/premium/status once userId is known
+  useEffect(() => {
+    if (!userId) return;
+    let aborted = false;
+    let timer = null;
+
+    async function check(attempt) {
+      if (aborted) return;
+      const token = localStorage.getItem(SESSION_KEY);
+      try {
+        const r = await fetch('/api/premium/status', { headers: { Authorization: `Bearer ${token}` } });
+        if (aborted) return;
+        if (!r.ok) { setErrorMsg('Could not verify premium status.'); setPhase('error'); return; }
+        const data = await r.json();
+        if (aborted) return;
+        if (data.active) {
+          setPhase('active');
+        } else if (attempt + 1 >= _maxPolls) {
+          setPhase('timed_out');
+        } else {
+          setPhase('pending');
+          timer = setTimeout(() => check(attempt + 1), _pollIntervalMs);
+        }
+      } catch (err) {
+        if (aborted) return;
+        setErrorMsg(err.message);
+        setPhase('error');
+      }
+    }
+
+    check(0);
+    return () => { aborted = true; clearTimeout(timer); };
+  }, [userId, _maxPolls, _pollIntervalMs]);
+
+  if (phase === 'unauthenticated') {
+    return (
+      <main>
+        <div className="premium-screen">
+          <h1>Sign in to continue</h1>
+          <p>Sign in to your gameroom account to see your premium status.</p>
+          <a href="/" className="compare-btn compare-btn--premium">Go home</a>
+        </div>
+      </main>
+    );
+  }
+
+  if (phase === 'error') {
+    return (
+      <main>
+        <div className="premium-screen">
+          <h1>Something went wrong</h1>
+          <p role="alert">{errorMsg || 'Unable to verify your premium status.'}</p>
+          <a href="/" className="compare-btn compare-btn--free">Go home</a>
+        </div>
+      </main>
+    );
+  }
+
+  if (phase === 'active') {
+    return (
+      <main>
+        <div className="premium-screen">
+          <h1>Premium activated</h1>
+          <p>Your subscription is active. You now have access to deeper stats and CSV export.</p>
+          <a href={`/u/export?user_id=${encodeURIComponent(userId)}`} className="compare-btn compare-btn--premium">
+            Download game history (CSV)
+          </a>
+          <a href="/" className="compare-btn compare-btn--free">Go home</a>
+        </div>
+      </main>
+    );
+  }
+
+  if (phase === 'timed_out') {
+    return (
+      <main>
+        <div className="premium-screen">
+          <h1>Activation is taking longer than expected</h1>
+          <p>Your payment was received. Premium activation can take a few minutes — please check back shortly or refresh this page.</p>
+          <a href="/" className="compare-btn compare-btn--free">Go home</a>
+        </div>
+      </main>
+    );
+  }
+
+  // loading | pending
+  return (
+    <main>
+      <div className="premium-screen">
+        <h1>{phase === 'pending' ? 'Activating your subscription…' : 'Checking your account…'}</h1>
+        <p role="status">{phase === 'pending' ? 'Waiting for payment confirmation…' : 'Please wait.'}</p>
+      </div>
+    </main>
+  );
+}
+
+// PremiumCancel — /premium/cancel
+export function PremiumCancel() {
+  return (
+    <main>
+      <div className="premium-screen">
+        <h1>Checkout cancelled</h1>
+        <p>Your payment was cancelled. No charge was made.</p>
+        <a href="/" className="compare-btn compare-btn--free">Go home</a>
+      </div>
+    </main>
+  );
+}
 
 const COMPARE_ROWS = [
   { feature: 'Public profile & shareable URL',    free: true,  premium: true },
@@ -67,10 +205,11 @@ function Home() {
 }
 
 function App() {
-  const match = window.location.pathname.match(/^\/u\/([^/]+)$/);
-  if (match) {
-    return <ProfilePage userId={match[1]} />;
-  }
+  const path = window.location.pathname;
+  if (path === '/premium/success') return <PremiumSuccess />;
+  if (path === '/premium/cancel') return <PremiumCancel />;
+  const match = path.match(/^\/u\/([^/]+)$/);
+  if (match) return <ProfilePage userId={match[1]} />;
   return <Home />;
 }
 
