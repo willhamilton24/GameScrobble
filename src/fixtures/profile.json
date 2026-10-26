@@ -1,0 +1,23 @@
+{
+  "populated": {
+    "year": 2026,
+    "total_minutes": 1265,
+    "total_games": 3,
+    "heatmap": [
+      { "date": "2026-01-10", "minutes": 120 },
+      { "date": "2026-03-05", "minutes": 60 }
+    ],
+    "top_games": [
+      { "app_id": 570, "name": "Dota 2", "minutes": 600 },
+      { "app_id": 440, "name": "Team Fortress 2", "minutes": 420 },
+      { "app_id": 730, "name": "CS:GO", "minutes": 245 }
+    ]
+  },
+  "empty": {
+    "year": 2026,
+    "total_minutes": 0,
+    "total_games": 0,
+    "heatmap": [],
+    "top_games": []
+  }
+}
