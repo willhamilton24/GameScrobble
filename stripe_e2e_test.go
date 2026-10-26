@@ -117,7 +117,8 @@ func TestStripeE2E(t *testing.T) {
 		t.Fatal("could not generate signup password")
 	}
 	var reg struct {
-		User struct {
+		Token string `json:"token"`
+		User  struct {
 			ID string `json:"id"`
 		} `json:"user"`
 	}
@@ -129,10 +130,11 @@ func TestStripeE2E(t *testing.T) {
 	t.Logf("registered user %s", userID)
 	export := func() (int, http.Header, []byte) {
 		t.Helper()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e2eAppURL+"/u/export?user_id="+url.QueryEscape(userID), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e2eAppURL+"/u/export", nil)
 		if err != nil {
 			t.Fatal("could not construct export request")
 		}
+		req.Header.Set("Authorization", "Bearer "+reg.Token)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal("export request failed or timed out (details suppressed)")

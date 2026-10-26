@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import { act } from 'react-dom/test-utils';
+import { act, Simulate } from 'react-dom/test-utils';
 import { PremiumSuccess, PremiumCancel } from './App';
 
 let root;
@@ -18,6 +18,8 @@ afterEach(() => {
   act(() => { ReactDOM.unmountComponentAtNode(root); });
   root.remove();
   delete global.fetch;
+  window.history.replaceState({}, '', '/');
+  jest.restoreAllMocks();
   jest.useRealTimers();
 });
 
@@ -29,12 +31,12 @@ async function tick() {
 
 // ── active state: server confirms premium immediately ─────────────────────────
 
-it('active: shows Premium activated and export link when server confirms immediately', async () => {
+it('active: shows Premium activated and export button when server confirms immediately', async () => {
   localStorage.setItem('gameroom.token', 'tok');
   fetch.mockReturnValueOnce(ok({ premium: true, user_id: 'u1' }));
   await act(async () => { ReactDOM.render(<PremiumSuccess />, root); });
   expect(root.textContent).toContain('Premium activated');
-  expect(root.querySelector('a[href*="export"]')).not.toBe(null);
+  expect(root.querySelector('button')).not.toBe(null);
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0][0]).toBe('/api/premium/status');
 });
@@ -72,15 +74,19 @@ it('expired: shows timed-out message when all polls return not-premium', async (
   await tick(); // attempt 2 — exhausted
   expect(root.textContent).toContain('taking longer');
   expect(fetch).toHaveBeenCalledTimes(3);
+  await tick();
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(root.querySelector('button')).toBe(null);
 });
 
 // ── cancelled screen ──────────────────────────────────────────────────────────
 
-it('cancelled: cancel screen shows no-charge message and home link', () => {
+it('cancelled: cancel screen shows neutral return message and home link', () => {
   const div = document.createElement('div');
   ReactDOM.render(<PremiumCancel />, div);
   expect(div.textContent).toContain('Checkout cancelled');
-  expect(div.textContent).toContain('cancelled');
+  expect(div.textContent).toContain('does not confirm payment or premium status');
+  expect(fetch).not.toHaveBeenCalled();
   expect(div.querySelector('a[href="/"]')).not.toBe(null);
   ReactDOM.unmountComponentAtNode(div);
 });
@@ -96,25 +102,89 @@ it('unauthenticated: shows sign-in prompt when no session token is present', asy
 
 // ── export only after activation ──────────────────────────────────────────────
 
-it('export link is absent while still activating', async () => {
+it('export button is absent while still activating', async () => {
   localStorage.setItem('gameroom.token', 'tok');
   let resolve;
   fetch.mockReturnValueOnce(new Promise(r => { resolve = r; }));
   await act(async () => { ReactDOM.render(<PremiumSuccess />, root); });
-  expect(root.querySelector('a[href*="export"]')).toBe(null);
+  expect(root.querySelector('button')).toBe(null);
   // Resolve as premium and verify link appears
   await act(async () => { resolve(ok({ premium: true, user_id: 'u2' }).then(v => v)); });
   // Ensure the pending promise chain resolves
   await act(async () => {});
-  expect(root.querySelector('a[href*="export"]')).not.toBe(null);
+  expect(root.querySelector('button')).not.toBe(null);
 });
 
 // ── server error ──────────────────────────────────────────────────────────────
 
-it('error: shows alert when the status endpoint returns a server error', async () => {
+it.each([401, 500])('error: shows alert when status returns %s', async status => {
   localStorage.setItem('gameroom.token', 'tok');
-  fetch.mockReturnValueOnce(ok({ error: 'db error' }, 500));
+  fetch.mockReturnValueOnce(ok({ error: 'failure' }, status));
   await act(async () => { ReactDOM.render(<PremiumSuccess />, root); });
   expect(root.querySelector('[role=alert]')).not.toBe(null);
-  expect(root.querySelector('a[href*="export"]')).toBe(null);
+  expect(root.querySelector('button')).toBe(null);
+});
+
+it('URL parameters never grant access or select the account', async () => {
+  window.history.replaceState({}, '', '/premium/success?session_id=fake&premium=true&user_id=other');
+  localStorage.setItem('gameroom.token', 'tok');
+  fetch.mockReturnValueOnce(ok({ premium: false, user_id: 'self' }));
+  await act(async () => { ReactDOM.render(<PremiumSuccess _maxPolls={1} />, root); });
+  expect(root.querySelector('button')).toBe(null);
+  expect(fetch.mock.calls[0]).toEqual(['/api/premium/status', {
+    headers: { Authorization: 'Bearer tok' }, cache: 'no-store'
+  }]);
+});
+
+it.each(['timer', 'request'])('unmount cleans up polling during a pending %s', async stage => {
+  jest.useFakeTimers();
+  localStorage.setItem('gameroom.token', 'tok');
+  let resolve;
+  fetch.mockReturnValueOnce(stage === 'timer' ? ok({ premium: false }) : new Promise(done => { resolve = done; }));
+  await act(async () => { ReactDOM.render(<PremiumSuccess />, root); });
+  act(() => { ReactDOM.unmountComponentAtNode(root); });
+  if (resolve) await act(async () => { resolve(await ok({ premium: false })); });
+  await tick();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(clearTimeout).toHaveBeenCalled();
+});
+
+async function activate() {
+  localStorage.setItem('gameroom.token', 'tok');
+  fetch.mockReturnValueOnce(ok({ premium: true, user_id: 'self' }));
+  await act(async () => { ReactDOM.render(<PremiumSuccess />, root); });
+  URL.createObjectURL = jest.fn(() => 'blob:fixture');
+  URL.revokeObjectURL = jest.fn();
+}
+
+it('downloads with bearer authentication and revokes the blob URL', async () => {
+  await activate();
+  const blob = new Blob(['app_id,name\n1,Fixture']);
+  fetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
+  const clicked = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+    expect(this.download).toBe('gameroom_history.csv');
+    expect(this.getAttribute('href')).toBe('blob:fixture');
+  });
+  await act(async () => { Simulate.click(root.querySelector('button')); });
+  expect(fetch.mock.calls[1]).toEqual(['/u/export', {
+    headers: { Authorization: 'Bearer tok' }, cache: 'no-store'
+  }]);
+  expect(clicked).toHaveBeenCalledTimes(1);
+  expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:fixture');
+  expect(document.querySelector('a[download]')).toBe(null);
+});
+
+it.each([401, 402, 500, 'network'])('download failure %s shows an error without downloading', async failure => {
+  await activate();
+  const blob = jest.fn();
+  if (failure === 'network') fetch.mockRejectedValueOnce(new Error('offline'));
+  else fetch.mockResolvedValueOnce({ ok: false, status: failure, blob });
+  const clicked = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  await act(async () => { Simulate.click(root.querySelector('button')); });
+  expect(root.querySelector('[role=alert]')).not.toBe(null);
+  expect(root.querySelector('button').disabled).toBe(false);
+  expect(blob).not.toHaveBeenCalled();
+  expect(clicked).not.toHaveBeenCalled();
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
 });

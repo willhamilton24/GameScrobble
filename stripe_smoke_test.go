@@ -114,9 +114,11 @@ func doWebhookReq(payload []byte, sig string) *fasthttp.RequestCtx {
 
 func doExportReq(userID string) *fasthttp.RequestCtx {
 	r := routing.New()
-	r.Get("/u/export", exportHistory)
+	registerPremiumRoutes(r)
 	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/u/export?user_id=" + userID)
+	ctx.Request.SetRequestURI("/u/export")
+	token, _ := signToken(userID)
+	ctx.Request.Header.Set("Authorization", "Bearer "+token)
 	ctx.Request.Header.SetMethod("GET")
 	r.HandleRequest(ctx)
 	return ctx

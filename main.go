@@ -443,13 +443,15 @@ func linkAccount(c *routing.Context) error {
 //
 
 // getDeepStats returns all-time playtime aggregations for a user (premium only).
-// Query param: user_id
+// The account comes exclusively from the authenticated session.
 func getDeepStats(c *routing.Context) error {
-	userID := string(c.QueryArgs().Peek("user_id"))
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
 	if userID == "" {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"user_id is required"}`)
+		writeJSONError(c, 401, "authentication required")
+		return nil
+	}
+	if requested := string(c.QueryArgs().Peek("user_id")); requested != "" && requested != userID {
+		writeJSONError(c, 403, "account mismatch")
 		return nil
 	}
 
@@ -537,13 +539,15 @@ var findExportHistory = func(ctx context.Context, userID string) ([]exportRow, e
 }
 
 // exportHistory streams a CSV of all play history for a user (premium only).
-// Query param: user_id
+// The account comes exclusively from the authenticated session.
 func exportHistory(c *routing.Context) error {
-	userID := string(c.QueryArgs().Peek("user_id"))
+	userID, _ := c.UserValue(authenticatedUserIDKey{}).(string)
 	if userID == "" {
-		c.SetStatusCode(400)
-		c.SetContentType("application/json")
-		c.WriteString(`{"error":"user_id is required"}`)
+		writeJSONError(c, 401, "authentication required")
+		return nil
+	}
+	if requested := string(c.QueryArgs().Peek("user_id")); requested != "" && requested != userID {
+		writeJSONError(c, 403, "account mismatch")
 		return nil
 	}
 
@@ -964,20 +968,7 @@ func main() {
 	router.Post("/api/stripe/webhook", func(c *routing.Context) error {
 		return handleStripeWebhook(c)
 	})
-	router.Get("/api/premium/status", func(c *routing.Context) error {
-		if !authMiddleware(c) {
-			return nil
-		}
-		return getPremiumStatus(c)
-	})
-
-	// Premium-gated endpoints
-	router.Get("/u/stats", func(c *routing.Context) error {
-		return getDeepStats(c)
-	})
-	router.Get("/u/export", func(c *routing.Context) error {
-		return exportHistory(c)
-	})
+	registerPremiumRoutes(router)
 
 	// Xbox Live OAuth linking
 	router.Get("/x/auth", func(c *routing.Context) error {
@@ -1031,4 +1022,21 @@ func main() {
 		return nil
 	})
 	panic(fasthttp.ListenAndServe(":"+port, router.HandleRequest))
+}
+
+// Shared by the server and route-level authentication regression tests.
+func registerPremiumRoutes(router *routing.Router) {
+	for path, handler := range map[string]routing.Handler{
+		"/api/premium/status": getPremiumStatus,
+		"/u/stats":            getDeepStats,
+		"/u/export":           exportHistory,
+	} {
+		handler := handler
+		router.Get(path, func(c *routing.Context) error {
+			if !authMiddleware(c) {
+				return nil
+			}
+			return handler(c)
+		})
+	}
 }

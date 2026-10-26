@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ExportDownload from './ExportDownload';
 import ProfilePage from './ProfilePage';
 import Account from './Account';
 import SampleProfile from './SampleProfile';
@@ -11,7 +12,6 @@ const SESSION_KEY = 'gameroom.token';
 // activation. The Stripe session_id in the URL is never used to grant access.
 export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
   const [phase, setPhase] = useState('loading'); // loading|pending|active|timed_out|error|unauthenticated
-  const [userId, setUserId] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
@@ -31,8 +31,7 @@ export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
         if (!r.ok) { setErrorMsg('Could not verify premium status.'); setPhase('error'); return; }
         const data = await r.json();
         if (aborted) return;
-        if (data.premium) {
-          setUserId(data.user_id || null);
+        if (data.premium === true) {
           setPhase('active');
         } else if (attempt + 1 >= _maxPolls) {
           setPhase('timed_out');
@@ -81,9 +80,7 @@ export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
         <div className="premium-screen">
           <h1>Premium activated</h1>
           <p>Your subscription is active. You now have access to deeper stats and CSV export.</p>
-          <a href={`/u/export?user_id=${encodeURIComponent(userId)}`} className="compare-btn compare-btn--premium">
-            Download game history (CSV)
-          </a>
+          <ExportDownload className="compare-btn compare-btn--premium" />
           <a href="/" className="compare-btn compare-btn--free">Go home</a>
         </div>
       </main>
@@ -95,7 +92,7 @@ export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
       <main>
         <div className="premium-screen">
           <h1>Activation is taking longer than expected</h1>
-          <p>Your payment was received. Premium activation can take a few minutes — please check back shortly or refresh this page.</p>
+          <p>Premium is not currently active for your account. Check back shortly or refresh this page to verify access again.</p>
           <a href="/" className="compare-btn compare-btn--free">Go home</a>
         </div>
       </main>
@@ -107,7 +104,7 @@ export function PremiumSuccess({ _maxPolls = 20, _pollIntervalMs = 3000 }) {
     <main>
       <div className="premium-screen">
         <h1>{phase === 'pending' ? 'Activating your subscription…' : 'Checking your account…'}</h1>
-        <p role="status">{phase === 'pending' ? 'Waiting for payment confirmation…' : 'Please wait.'}</p>
+        <p role="status">{phase === 'pending' ? 'Waiting for verified premium access…' : 'Please wait.'}</p>
       </div>
     </main>
   );
@@ -119,7 +116,7 @@ export function PremiumCancel() {
     <main>
       <div className="premium-screen">
         <h1>Checkout cancelled</h1>
-        <p>Your payment was cancelled. No charge was made.</p>
+        <p>You returned from checkout using the cancel option. This page does not confirm payment or premium status.</p>
         <a href="/" className="compare-btn compare-btn--free">Go home</a>
       </div>
     </main>

@@ -32,7 +32,7 @@ it('shows loading, then fixture totals and numeric, name and date sorting in bot
   fetch.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
   await render();
   expect(root.querySelector('[role=status]').textContent).toContain('Loading');
-  expect(fetch.mock.calls[0]).toEqual(['/u/stats?user_id=fixture-account', {
+  expect(fetch.mock.calls[0]).toEqual(['/u/stats', {
     headers: { Authorization: 'Bearer fixture-token' }, cache: 'no-store'
   }]);
   await act(async () => { resolve(await response(fixtures.populated)); });

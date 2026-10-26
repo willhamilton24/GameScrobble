@@ -15,7 +15,7 @@ export default function PremiumStats({ userId, token, onUpgrade, busy }) {
     setState({ status: 'loading', games: [] });
     async function load() {
       try {
-        const response = await fetch(`/u/stats?user_id=${encodeURIComponent(userId)}`, {
+        const response = await fetch('/u/stats', {
           headers: { Authorization: `Bearer ${token}` }, cache: 'no-store'
         });
         if (response.status === 402) {

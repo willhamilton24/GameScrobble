@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
+import ExportDownload from './ExportDownload';
 import PremiumStats from './PremiumStats';
 
 import { signupAttribution } from './attribution';
@@ -121,7 +122,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
         <div>
           <p>Signed in as {user.email}</p>
           <p><a href={`/u/${encodeURIComponent(user.id)}`}>View your profile</a></p>
-          <p><a href={`/u/export?user_id=${encodeURIComponent(user.id)}`}>Export game snapshots (Premium)</a></p>
+          <p><ExportDownload /></p>
           <button id="premium-checkout" type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
           <button type="button" disabled={busy} onClick={logout}>Log out</button>
           <button type="button" aria-expanded={showStats} aria-controls="account-stats" onClick={() => setShowStats(!showStats)}>
