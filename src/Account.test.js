@@ -73,6 +73,80 @@ it('discards an expired session and displays authentication errors', async () =>
   expect(JSON.parse(fetch.mock.calls[0][1].body).source).toBe('backloggd');
  });
 
+it('retains the stored token and shows a retry button on a 5xx server error', async () => {
+  localStorage.setItem('gameroom.token', 'stored-token');
+  fetch.mockImplementationOnce(() => response({ error: 'internal server error' }, 500));
+  await render();
+  expect(localStorage.getItem('gameroom.token')).toBe('stored-token');
+  expect(root.querySelector('[role=alert]').textContent).toContain('Please try again');
+  const retryBtn = Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Retry');
+  expect(retryBtn).not.toBeNull();
+  expect(root.textContent).not.toContain('Signed in as');
+});
+
+it('retains the stored token and shows a retry button on a network failure', async () => {
+  localStorage.setItem('gameroom.token', 'stored-token');
+  fetch.mockImplementationOnce(() => Promise.reject(new Error('Failed to fetch')));
+  await render();
+  expect(localStorage.getItem('gameroom.token')).toBe('stored-token');
+  expect(root.querySelector('[role=alert]').textContent).toContain('Please try again');
+  const retryBtn = Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Retry');
+  expect(retryBtn).not.toBeNull();
+});
+
+it('restores the session on retry without requiring re-login', async () => {
+  localStorage.setItem('gameroom.token', 'stored-token');
+  fetch.mockImplementationOnce(() => response({ error: 'gateway timeout' }, 504));
+  await render();
+  expect(root.textContent).not.toContain('Signed in as');
+  expect(localStorage.getItem('gameroom.token')).toBe('stored-token');
+
+  fetch.mockImplementationOnce(() => response(account));
+  const retryBtn = Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Retry');
+  await act(async () => { Simulate.click(retryBtn); });
+  expect(fetch.mock.calls[1]).toEqual(['/auth/me', { headers: { Authorization: 'Bearer stored-token' } }]);
+  expect(root.textContent).toContain(`Signed in as ${account.email}`);
+  expect(root.querySelector('[role=alert]')).toBeNull();
+});
+
+it('prevents duplicate retries: Retry button is absent while a retry is in progress', async () => {
+  localStorage.setItem('gameroom.token', 'stored-token');
+  fetch.mockImplementationOnce(() => response({ error: 'bad gateway' }, 502));
+  await render();
+  const retryBtn = () => Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Retry');
+  expect(retryBtn()).toBeDefined();
+
+  let resolve;
+  fetch.mockImplementationOnce(() => new Promise(res => { resolve = res; }));
+  await act(async () => { Simulate.click(retryBtn()); });
+  // Button disappears once the retry is in flight — can't trigger a duplicate
+  expect(retryBtn()).toBeUndefined();
+  await act(async () => { resolve({ ok: true, status: 200, json: () => Promise.resolve(account) }); });
+  expect(root.textContent).toContain(`Signed in as ${account.email}`);
+});
+
+it('ignores a stale /auth/me response if the token was cleared before the response arrived', async () => {
+  localStorage.setItem('gameroom.token', 'stored-token');
+  let resolve;
+  fetch.mockImplementationOnce(() => new Promise(res => { resolve = res; }));
+  act(() => { ReactDOM.render(<Account />, root); });
+  // Clear the token (simulating logout from another tab) before the response arrives
+  localStorage.removeItem('gameroom.token');
+  await act(async () => {
+    resolve({ ok: true, status: 200, json: () => Promise.resolve(account) });
+  });
+  expect(root.textContent).not.toContain('Signed in as');
+});
+
+it('discards an expired session (genuine 401) without offering a retry', async () => {
+  localStorage.setItem('gameroom.token', 'expired-token');
+  fetch.mockImplementationOnce(() => response({ error: 'invalid or expired token' }, 401));
+  await render();
+  expect(localStorage.getItem('gameroom.token')).toBe(null);
+  const retryBtn = Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Retry');
+  expect(retryBtn).toBeUndefined();
+});
+
 it('opens stats for the signed-in account and removes them on logout', async () => {
   localStorage.setItem('gameroom.token', 'fixture-token');
   fetch.mockImplementationOnce(() => response(account));
