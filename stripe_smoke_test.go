@@ -30,12 +30,14 @@ type memPremiumStore struct {
 	mu        sync.Mutex
 	records   map[string]time.Time // userID → premiumUntil
 	customers map[string]string    // stripeCustomerID → userID
+	problems  map[string]bool      // userID → payment_problem
 }
 
 func newMemPremiumStore() *memPremiumStore {
 	return &memPremiumStore{
 		records:   make(map[string]time.Time),
 		customers: make(map[string]string),
+		problems:  make(map[string]bool),
 	}
 }
 
@@ -86,6 +88,21 @@ func (s *memPremiumStore) checkPremium(_ context.Context, userID string) (bool, 
 	return ok && t.After(time.Now()), nil
 }
 
+func (s *memPremiumStore) setPaymentProblem(customerID string, problem bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if uid, ok := s.customers[customerID]; ok {
+		s.problems[uid] = problem
+	}
+	return nil
+}
+
+func (s *memPremiumStore) hasPaymentProblem(_ context.Context, userID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.problems[userID], nil
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -117,6 +134,18 @@ func doExportReq(userID string) *fasthttp.RequestCtx {
 	registerPremiumRoutes(r)
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.SetRequestURI("/u/export")
+	token, _ := signToken(userID)
+	ctx.Request.Header.Set("Authorization", "Bearer "+token)
+	ctx.Request.Header.SetMethod("GET")
+	r.HandleRequest(ctx)
+	return ctx
+}
+
+func doStatusReq(userID string) *fasthttp.RequestCtx {
+	r := routing.New()
+	registerPremiumRoutes(r)
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/api/premium/status")
 	token, _ := signToken(userID)
 	ctx.Request.Header.Set("Authorization", "Bearer "+token)
 	ctx.Request.Header.SetMethod("GET")
@@ -174,6 +203,24 @@ func invoicePaymentSucceededEvent(customerID, userID string, periodEnd time.Time
 					"object": "list",
 					"data":   []interface{}{},
 				},
+			},
+		},
+	})
+	return b
+}
+
+func invoicePaymentFailedEvent(customerID string) []byte {
+	b, _ := json.Marshal(map[string]interface{}{
+		"id":          "evt_smoke_pfail",
+		"object":      "event",
+		"type":        "invoice.payment_failed",
+		"api_version": "2026-09-30.endive",
+		"created":     time.Now().Unix(),
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":       "in_smoke_fail",
+				"object":   "invoice",
+				"customer": customerID,
 			},
 		},
 	})
@@ -368,6 +415,9 @@ func (failingPremiumStore) extend(string, string, time.Time) error {
 func (failingPremiumStore) deactivateByCustomer(string) error {
 	return fmt.Errorf("test database unavailable")
 }
+func (failingPremiumStore) setPaymentProblem(string, bool) error {
+	return fmt.Errorf("test database unavailable")
+}
 
 func TestStripeRetriesPersistenceFailures(t *testing.T) {
 	previous := premiums
@@ -378,10 +428,78 @@ func TestStripeRetriesPersistenceFailures(t *testing.T) {
 		checkoutCompletedEvent(smokeUserID, smokeCustomerID),
 		invoicePaymentSucceededEvent(smokeCustomerID, smokeUserID, time.Now().Add(30*24*time.Hour)),
 		subscriptionDeletedEvent(smokeCustomerID),
+		invoicePaymentFailedEvent(smokeCustomerID),
 	} {
 		ctx := doWebhookReq(payload, signStripePayload(payload, smokeWebhookSecret, time.Now()))
 		if ctx.Response.StatusCode() != 500 {
 			t.Fatalf("got %d, want retryable 500", ctx.Response.StatusCode())
 		}
+	}
+}
+
+// TestPaymentFailedFlagSetAndCleared verifies that invoice.payment_failed sets
+// the payment_problem flag on the in-memory store and that invoice.payment_succeeded
+// clears it, and that both states are reflected in /api/premium/status.
+func TestPaymentFailedFlagSetAndCleared(t *testing.T) {
+	store := newMemPremiumStore()
+	oldPremiums := premiums
+	premiums = store
+	t.Cleanup(func() { premiums = oldPremiums })
+	t.Setenv("STRIPE_WEBHOOK_SECRET", smokeWebhookSecret)
+
+	// Establish the customer→user mapping via checkout.session.completed.
+	payload := checkoutCompletedEvent(smokeUserID, smokeCustomerID)
+	sig := signStripePayload(payload, smokeWebhookSecret, time.Now())
+	if ctx := doWebhookReq(payload, sig); ctx.Response.StatusCode() != 200 {
+		t.Fatalf("checkout webhook failed: %s", ctx.Response.Body())
+	}
+
+	// invoice.payment_failed must set the flag.
+	payload = invoicePaymentFailedEvent(smokeCustomerID)
+	sig = signStripePayload(payload, smokeWebhookSecret, time.Now())
+	if ctx := doWebhookReq(payload, sig); ctx.Response.StatusCode() != 200 {
+		t.Fatalf("payment_failed webhook returned %d: %s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if got, _ := store.hasPaymentProblem(context.Background(), smokeUserID); !got {
+		t.Fatal("expected payment_problem to be set after invoice.payment_failed")
+	}
+
+	// /api/premium/status must include payment_problem: true.
+	statusCtx := doStatusReq(smokeUserID)
+	if statusCtx.Response.StatusCode() != 200 {
+		t.Fatalf("status returned %d: %s", statusCtx.Response.StatusCode(), statusCtx.Response.Body())
+	}
+	var status struct {
+		Premium        bool `json:"premium"`
+		PaymentProblem bool `json:"payment_problem"`
+	}
+	if err := json.Unmarshal(statusCtx.Response.Body(), &status); err != nil {
+		t.Fatalf("failed to parse status response: %v", err)
+	}
+	if !status.PaymentProblem {
+		t.Fatalf("expected payment_problem: true in status response, got: %s", statusCtx.Response.Body())
+	}
+
+	// invoice.payment_succeeded must clear the flag.
+	futureEnd := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second)
+	payload = invoicePaymentSucceededEvent(smokeCustomerID, smokeUserID, futureEnd)
+	sig = signStripePayload(payload, smokeWebhookSecret, time.Now())
+	if ctx := doWebhookReq(payload, sig); ctx.Response.StatusCode() != 200 {
+		t.Fatalf("payment_succeeded webhook returned %d: %s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if got, _ := store.hasPaymentProblem(context.Background(), smokeUserID); got {
+		t.Fatal("expected payment_problem to be cleared after invoice.payment_succeeded")
+	}
+
+	// /api/premium/status must show payment_problem: false after clearing.
+	statusCtx = doStatusReq(smokeUserID)
+	if statusCtx.Response.StatusCode() != 200 {
+		t.Fatalf("status returned %d: %s", statusCtx.Response.StatusCode(), statusCtx.Response.Body())
+	}
+	if err := json.Unmarshal(statusCtx.Response.Body(), &status); err != nil {
+		t.Fatalf("failed to parse status response: %v", err)
+	}
+	if status.PaymentProblem {
+		t.Fatalf("expected payment_problem: false after invoice.payment_succeeded, got: %s", statusCtx.Response.Body())
 	}
 }

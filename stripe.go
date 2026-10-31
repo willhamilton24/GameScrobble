@@ -30,6 +30,8 @@ type premiumStore interface {
 	extend(stripeCustomerID, userID string, periodEnd time.Time) error
 	deactivateByCustomer(stripeCustomerID string) error
 	checkPremium(ctx context.Context, userID string) (bool, error)
+	setPaymentProblem(stripeCustomerID string, problem bool) error
+	hasPaymentProblem(ctx context.Context, userID string) (bool, error)
 }
 
 // premiums is the active store; defaults to pgPremiumStore and is
@@ -50,6 +52,12 @@ func (pgPremiumStore) deactivateByCustomer(stripeCustomerID string) error {
 }
 func (pgPremiumStore) checkPremium(ctx context.Context, userID string) (bool, error) {
 	return isPremium(ctx, userID)
+}
+func (pgPremiumStore) setPaymentProblem(stripeCustomerID string, problem bool) error {
+	return setPaymentProblemByCustomer(stripeCustomerID, problem)
+}
+func (pgPremiumStore) hasPaymentProblem(ctx context.Context, userID string) (bool, error) {
+	return checkPaymentProblem(ctx, userID)
 }
 
 func stripeKey() string           { return os.Getenv("STRIPE_SECRET_KEY") }
@@ -200,9 +208,26 @@ func handleStripeWebhook(c *routing.Context) error {
 		if err := premiums.extend(customerID, userID, invoicePeriodEnd(&inv)); err != nil {
 			return stripeProcessingError(c, event.ID, err)
 		}
+		if customerID != "" {
+			if err := premiums.setPaymentProblem(customerID, false); err != nil {
+				return stripeProcessingError(c, event.ID, err)
+			}
+		}
 
 	case "invoice.payment_failed":
-		log.Printf("stripe webhook: payment failed for event %s", event.ID)
+		var inv stripe.Invoice
+		if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
+			return stripeProcessingError(c, event.ID, err)
+		}
+		customerID := ""
+		if inv.Customer != nil {
+			customerID = inv.Customer.ID
+		}
+		if customerID != "" {
+			if err := premiums.setPaymentProblem(customerID, true); err != nil {
+				return stripeProcessingError(c, event.ID, err)
+			}
+		}
 	}
 
 	log.Printf("stripe webhook: processed event=%s type=%s", event.ID, event.Type)
@@ -316,10 +341,49 @@ func getPremiumStatus(c *routing.Context) error {
 		c.WriteString(`{"error":"failed to check premium status"}`)
 		return nil
 	}
+	problem, err := premiums.hasPaymentProblem(c.RequestCtx, userID)
+	if err != nil {
+		c.SetStatusCode(500)
+		c.SetContentType("application/json")
+		c.WriteString(`{"error":"failed to check premium status"}`)
+		return nil
+	}
 	c.SetContentType("application/json")
-	out, _ := json.Marshal(map[string]interface{}{"premium": ok, "user_id": userID})
+	out, _ := json.Marshal(map[string]interface{}{
+		"premium":         ok,
+		"user_id":         userID,
+		"payment_problem": problem,
+	})
 	c.Write(out)
 	return nil
+}
+
+// setPaymentProblemByCustomer sets or clears the payment_problem flag for the
+// row identified by the Stripe customer ID.
+func setPaymentProblemByCustomer(stripeCustomerID string, problem bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+	_, err := db.Exec(ctx,
+		`UPDATE premium_users SET payment_problem = $1 WHERE stripe_customer_id = $2`,
+		problem, stripeCustomerID,
+	)
+	return err
+}
+
+// checkPaymentProblem returns true when the user's subscription has a persisted
+// payment-problem flag set by a recent invoice.payment_failed event.
+func checkPaymentProblem(ctx context.Context, userID string) (bool, error) {
+	c, cancel := context.WithTimeout(ctx, dbTimeout)
+	defer cancel()
+	var problem bool
+	err := db.QueryRow(c,
+		`SELECT payment_problem FROM premium_users WHERE user_id = $1`,
+		userID,
+	).Scan(&problem)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return problem, err
 }
 
 // isPremium returns true when the user has an active premium subscription.

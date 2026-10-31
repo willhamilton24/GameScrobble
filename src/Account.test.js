@@ -39,14 +39,16 @@ it('signs up, restores the account after reload, logs out, and logs back in', as
   act(() => { ReactDOM.unmountComponentAtNode(root); });
   fetch.mockImplementationOnce(() => response(account));
   await render();
-  expect(fetch.mock.calls[1]).toEqual(['/auth/me', { headers: { Authorization: 'Bearer test-token' } }]);
+  // calls[0]=register, calls[1]=premium/status (post-register), calls[2]=/auth/me (restore)
+  expect(fetch.mock.calls[2]).toEqual(['/auth/me', { headers: { Authorization: 'Bearer test-token' } }]);
   expect(root.textContent).toContain(account.email);
   act(() => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Log out')); });
   expect(localStorage.getItem('gameroom.token')).toBe(null);
   expect(root.textContent).not.toContain('Signed in as');
   fetch.mockImplementationOnce(() => response({ token: 'new-test-token', user: account }));
   await submit();
-  expect(fetch.mock.calls[2][0]).toBe('/auth/login');
+  // calls[0]=register, [1]=premium/status, [2]=/auth/me, [3]=premium/status, [4]=login
+  expect(fetch.mock.calls[4][0]).toBe('/auth/login');
   expect(root.textContent).toContain(account.email);
   expect(localStorage.getItem('gameroom.token')).toBe('new-test-token');
 });
@@ -155,10 +157,40 @@ it('opens stats for the signed-in account and removes them on logout', async () 
   await act(async () => {
     Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'View Premium stats'));
   });
-  expect(fetch.mock.calls[1]).toEqual(['/u/stats', {
+  // calls[0]=/auth/me (restore), calls[1]=premium/status (post-restore), calls[2]=/u/stats
+  expect(fetch.mock.calls[2]).toEqual(['/u/stats', {
     headers: { Authorization: 'Bearer fixture-token' }, cache: 'no-store'
   }]);
   expect(root.textContent).toContain('No game stats yet');
   act(() => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Log out')); });
   expect(root.querySelector('.premium-stats')).toBe(null);
+});
+
+it('shows a payment-issue alert when premium status reports payment_problem', async () => {
+  localStorage.setItem('gameroom.token', 'fixture-token');
+  fetch.mockImplementationOnce(() => response(account));
+  fetch.mockImplementationOnce(() => response({ premium: true, payment_problem: true, user_id: account.id }));
+  await render();
+  const alert = root.querySelector('.payment-issue');
+  expect(alert).not.toBeNull();
+  expect(alert.textContent).toMatch(/payment/i);
+  expect(alert.textContent).toMatch(/update your payment method/i);
+});
+
+it('does not show a payment-issue alert when payment_problem is false', async () => {
+  localStorage.setItem('gameroom.token', 'fixture-token');
+  fetch.mockImplementationOnce(() => response(account));
+  fetch.mockImplementationOnce(() => response({ premium: true, payment_problem: false, user_id: account.id }));
+  await render();
+  expect(root.querySelector('.payment-issue')).toBeNull();
+});
+
+it('clears the payment-issue alert on logout', async () => {
+  localStorage.setItem('gameroom.token', 'fixture-token');
+  fetch.mockImplementationOnce(() => response(account));
+  fetch.mockImplementationOnce(() => response({ premium: true, payment_problem: true, user_id: account.id }));
+  await render();
+  expect(root.querySelector('.payment-issue')).not.toBeNull();
+  act(() => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent === 'Log out')); });
+  expect(root.querySelector('.payment-issue')).toBeNull();
 });

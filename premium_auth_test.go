@@ -28,7 +28,15 @@ func (d *premiumFixtureDB) QueryRow(_ context.Context, _ string, args ...any) pg
 
 type premiumFixtureRow struct{ until time.Time }
 
-func (r premiumFixtureRow) Scan(dest ...any) error { *dest[0].(*time.Time) = r.until; return nil }
+func (r premiumFixtureRow) Scan(dest ...any) error {
+	switch d := dest[0].(type) {
+	case *time.Time:
+		*d = r.until
+	case *bool:
+		*d = false // payment_problem defaults to false in the fixture
+	}
+	return nil
+}
 func (d *premiumFixtureDB) Query(_ context.Context, _ string, args ...any) (pgx.Rows, error) {
 	d.historyIDs = append(d.historyIDs, args[0].(string))
 	return &queryTestRows{}, nil
