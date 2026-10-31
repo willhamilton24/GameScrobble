@@ -67,7 +67,7 @@ function Heatmap({ data }) {
 
   return (
     <div className="heatmap-wrap">
-      <svg width={svgW} height={svgH + 18} style={{ overflow: 'visible', display: 'block' }}>
+      <svg width={svgW} height={svgH + 18} role="grid" aria-label="Activity heatmap" style={{ overflow: 'visible', display: 'block' }}>
         {months.map(function(m, i) {
           return (
             <text key={i} x={m.x} y={10} fontSize={9} fill="#475569" fontFamily="inherit">
@@ -76,7 +76,7 @@ function Heatmap({ data }) {
           );
         })}
         {weeks.map(function(week, wi) {
-          return week.map(function(day, di) {
+          const cells = week.map(function(day, di) {
             const cellLabel = day.date + ': ' + (day.minutes > 0 ? formatHours(day.minutes) : 'No activity');
             return (
               <rect
@@ -92,13 +92,23 @@ function Heatmap({ data }) {
                 aria-label={cellLabel}
                 onFocus={function() { setActiveDay(day); }}
                 onClick={function() { setActiveDay(day); }}
-                onKeyDown={function(e) { if (e.key === 'Enter' || e.key === ' ') setActiveDay(day); }}
+                onKeyDown={function(e) {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setActiveDay(day);
+                  }
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 <title>{cellLabel}</title>
               </rect>
             );
           });
+          return (
+            <g key={wi} role="row">
+              {cells}
+            </g>
+          );
         })}
       </svg>
       {activeDay && (

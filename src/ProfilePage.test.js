@@ -13,13 +13,29 @@ const click = async label => {
   await act(async () => { Simulate.click(Array.from(root.querySelectorAll('button')).find(b => b.textContent.includes(label))); });
 };
 
+// Heatmap derives "today" from new Date(); pin the clock so the fixed-date
+// fixtures stay inside the rolling 52-week window. (Jest 23 here has no
+// setSystemTime, so override the zero-arg Date constructor instead.)
+const RealDate = Date;
+class FixedDate extends RealDate {
+  constructor(...args) {
+    if (args.length === 0) {
+      super('2026-10-31T12:00:00Z');
+    } else {
+      super(...args);
+    }
+  }
+}
+
 beforeEach(() => {
+  global.Date = FixedDate;
   root = document.createElement('div');
   document.body.appendChild(root);
   global.fetch = jest.fn();
   delete navigator.clipboard;
 });
 afterEach(() => {
+  global.Date = RealDate;
   act(() => { ReactDOM.unmountComponentAtNode(root); });
   root.remove();
   delete global.fetch;
