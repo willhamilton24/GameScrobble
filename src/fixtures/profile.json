@@ -19,5 +19,40 @@
     "total_games": 0,
     "heatmap": [],
     "top_games": []
+  },
+  "utcBoundary": {
+    "year": 2026,
+    "total_minutes": 90,
+    "total_games": 1,
+    "heatmap": [
+      { "date": "2026-01-01", "minutes": 90 }
+    ],
+    "top_games": [
+      { "app_id": 570, "name": "Dota 2", "minutes": 90 }
+    ]
+  },
+  "dstBoundary": {
+    "year": 2026,
+    "total_minutes": 120,
+    "total_games": 1,
+    "heatmap": [
+      { "date": "2025-11-02", "minutes": 45 },
+      { "date": "2026-03-08", "minutes": 75 }
+    ],
+    "top_games": [
+      { "app_id": 570, "name": "Dota 2", "minutes": 120 }
+    ]
+  },
+  "yearBoundary": {
+    "year": 2026,
+    "total_minutes": 90,
+    "total_games": 1,
+    "heatmap": [
+      { "date": "2025-12-31", "minutes": 30 },
+      { "date": "2026-01-01", "minutes": 60 }
+    ],
+    "top_games": [
+      { "app_id": 570, "name": "Dota 2", "minutes": 90 }
+    ]
   }
 }
