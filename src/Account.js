@@ -13,32 +13,56 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
   const [mode, setMode] = useState('register');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    const tokenAtStart = localStorage.getItem(sessionKey);
+
+    if (!tokenAtStart) {
+      if (mounted) setBusy(false);
+      return () => { mounted = false; };
+    }
+
+    setBusy(true);
+    setError('');
+    setCanRetry(false);
+
     async function restore() {
       try {
-        const token = localStorage.getItem(sessionKey);
-        if (!token) return;
         const response = await fetch('/auth/me', {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${tokenAtStart}` }
         });
+        if (!mounted) return;
+        // Stale: token was cleared by logout while fetch was in flight
+        if (localStorage.getItem(sessionKey) !== tokenAtStart) return;
         if (response.status === 401 || response.status === 404) {
           localStorage.removeItem(sessionKey);
           return;
         }
-        if (!response.ok) throw new Error('Unable to restore your session. Please try again.');
+        if (!response.ok) {
+          setCanRetry(true);
+          setError('Unable to restore your session. Please try again.');
+          return;
+        }
         const account = await response.json();
-        if (mounted) setUser(account);
+        setUser(account);
       } catch (err) {
-        if (mounted) setError(err.message);
+        if (!mounted) return;
+        // Network/transport failure: keep token so the user can retry
+        if (localStorage.getItem(sessionKey) === tokenAtStart) {
+          setCanRetry(true);
+          setError('Unable to reach the server. Please try again.');
+        }
       } finally {
         if (mounted) setBusy(false);
       }
     }
+
     restore();
     return () => { mounted = false; };
-  }, []);
+  }, [retryCount]);
 
   useEffect(() => {
     if (onUserChange) onUserChange(user);
@@ -83,15 +107,22 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
     }
   }
 
+  function handleRetry() {
+    if (busy) return;
+    setBusy(true);
+    setRetryCount(c => c + 1);
+  }
+
   function logout() {
     try {
       localStorage.removeItem(sessionKey);
       setUser(null);
       setShowStats(false);
       setError('');
+      setCanRetry(false);
       setMode('login');
     } catch (err) {
-      setError('Unable to clear your session. Please clear this site’s browser storage.');
+      setError("Unable to clear your session. Please clear this site\u2019s browser storage.");
     }
   }
 
@@ -118,6 +149,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
       <h2>{user ? 'Your account' : mode === 'register' ? 'Create your account' : 'Log in'}</h2>
       {premiumRequest > 0 && !user && <p>Create your account, then use Upgrade to Premium to continue to checkout.</p>}
       {error && <p role="alert">{error}</p>}
+      {canRetry && <button type="button" disabled={busy} onClick={handleRetry}>Retry</button>}
       {user ? (
         <div>
           <p>Signed in as {user.email}</p>
