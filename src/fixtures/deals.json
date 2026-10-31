@@ -1,0 +1,17 @@
+{
+  "offersPresent": {
+    "pc_deals": [{ "vendor": "humble", "url": "https://www.humblebundle.com/store/fixture", "deal_url": "https://www.humblebundle.com/store/fixture?partner=fixture-partner" }],
+    "xbox_deals": [], "playstation_deals": [], "switch_deals": [],
+    "find_more_deals": "https://isthereanydeal.com/search/?q=Fixture&ref=fixture-partner"
+  },
+  "noOffers": {
+    "pc_deals": [], "xbox_deals": [], "playstation_deals": [], "switch_deals": [],
+    "find_more_deals": "https://isthereanydeal.com/search/?q=Fixture&ref=fixture-partner"
+  },
+  "untagged": {
+    "pc_deals": [{ "vendor": "humble", "deal_url": "https://www.humblebundle.com/store/fixture" }],
+    "find_more_deals": "https://isthereanydeal.com/search/?q=Fixture"
+  },
+  "lookupFailure": { "error": "database error" },
+  "notFound": { "error": "game not found" }
+}

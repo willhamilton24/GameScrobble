@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './ProfilePage.css';
+import GameDeals from './GameDeals';
 
 function formatHours(minutes) {
   const h = Math.floor(minutes / 60);
@@ -140,6 +141,7 @@ function GameCard({ game }) {
       <div className="game-info">
         <div className="game-name" title={game.name}>{game.name}</div>
         <div className="game-time">{formatHours(game.minutes)}</div>
+        <GameDeals title={game.name} />
       </div>
     </div>
   );
