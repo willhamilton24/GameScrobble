@@ -6,6 +6,12 @@
       { "app_id": 303, "name": "Moon Harbor", "playtime_total": 0, "playtime_recent": 0, "last_polled": "2026-10-22T10:00:00Z" }
     ]
   },
+  "zeroRecent": {
+    "stats": [
+      { "app_id": 401, "name": "Ancient Quest", "playtime_total": 500, "playtime_recent": 0, "last_polled": "2026-10-20T10:00:00Z" },
+      { "app_id": 402, "name": "Space Wanderer", "playtime_total": 200, "playtime_recent": 0, "last_polled": "2026-10-21T10:00:00Z" }
+    ]
+  },
   "empty": { "stats": [] },
   "free": { "error": "premium subscription required", "upgrade_url": "/api/stripe/checkout" }
 }
