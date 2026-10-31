@@ -821,9 +821,10 @@ func pollUserPlayHistory(steamID, userID, key string) {
 
 // recordGameActivity reads the prior playtime baseline, records any positive
 // daily delta in play_activity, and advances the baseline in play_history — all
-// in one Postgres transaction. SELECT … FOR UPDATE serialises concurrent polls
-// for the same (user_id, app_id) row so only one transaction computes the delta
-// at a time. If the activity write fails the transaction rolls back, leaving the
+// in one Postgres transaction. A per-(user_id, app_id) advisory lock serialises
+// concurrent polls — including first observations, where there is no row for
+// SELECT … FOR UPDATE to lock — so only one transaction computes the delta at a
+// time. If the activity write fails the transaction rolls back, leaving the
 // baseline unchanged so the minutes are not lost on the next poll.
 func recordGameActivity(userID, steamID string, appID int, name string, playtimeTotal, playtimeRecent int, now time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
@@ -834,6 +835,15 @@ func recordGameActivity(userID, steamID string, appID int, name string, playtime
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit; rolls back on any error return
+
+	// Advisory lock on (user_id, app_id): FOR UPDATE cannot lock a row that
+	// doesn't exist yet, so concurrent first observations would otherwise race.
+	// The lock is released automatically at commit/rollback.
+	if _, err = tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))
+	`, userID, strconv.Itoa(appID)); err != nil {
+		return err
+	}
 
 	var oldPT int
 	scanErr := tx.QueryRow(ctx, `
@@ -867,7 +877,9 @@ func recordGameActivity(userID, steamID string, appID int, name string, playtime
 		ON CONFLICT (user_id, app_id) DO UPDATE SET
 			steam_id        = $2,
 			name            = $4,
-			playtime_total  = $5,
+			-- Never lower the baseline: a stale/out-of-order poll reporting a
+			-- smaller total must not cause the delta to be counted again later.
+			playtime_total  = GREATEST(play_history.playtime_total, EXCLUDED.playtime_total),
 			playtime_recent = $6,
 			last_polled     = $7
 	`, userID, steamID, appID, name, playtimeTotal, playtimeRecent, now)

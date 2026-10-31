@@ -82,8 +82,8 @@ func TestPollGameActivity_FirstObservation(t *testing.T) {
 	if err := recordGameActivity("u1", "s1", 1, "Game", 60, 60, time.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tx.execCalls != 1 {
-		t.Fatalf("expected 1 exec (baseline only), got %d", tx.execCalls)
+	if tx.execCalls != 2 {
+		t.Fatalf("expected 2 execs (advisory lock + baseline), got %d", tx.execCalls)
 	}
 	if !tx.committed || tx.rolledBack {
 		t.Fatal("expected commit, not rollback")
@@ -98,8 +98,8 @@ func TestPollGameActivity_PositiveDelta(t *testing.T) {
 	if err := recordGameActivity("u1", "s1", 1, "Game", 100, 60, time.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tx.execCalls != 2 {
-		t.Fatalf("expected 2 execs (activity + baseline), got %d", tx.execCalls)
+	if tx.execCalls != 3 {
+		t.Fatalf("expected 3 execs (advisory lock + activity + baseline), got %d", tx.execCalls)
 	}
 	if !tx.committed || tx.rolledBack {
 		t.Fatal("expected commit, not rollback")
@@ -114,8 +114,8 @@ func TestPollGameActivity_NoDelta(t *testing.T) {
 	if err := recordGameActivity("u1", "s1", 1, "Game", 100, 0, time.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if tx.execCalls != 1 {
-		t.Fatalf("expected 1 exec (baseline only), got %d", tx.execCalls)
+	if tx.execCalls != 2 {
+		t.Fatalf("expected 2 execs (advisory lock + baseline), got %d", tx.execCalls)
 	}
 	if !tx.committed || tx.rolledBack {
 		t.Fatal("expected commit")
@@ -126,7 +126,7 @@ func TestPollGameActivity_NoDelta(t *testing.T) {
 func TestPollGameActivity_Rollback(t *testing.T) {
 	tx := &fakePollTx{
 		histRow:     pollRow{val: 50},
-		execResults: []error{errPollTest}, // first exec (activity) fails
+		execResults: []error{nil, errPollTest}, // lock ok, activity fails
 	}
 	usePollStarter(t, &fakePollStarter{tx})
 
@@ -134,8 +134,8 @@ func TestPollGameActivity_Rollback(t *testing.T) {
 	if !errors.Is(err, errPollTest) {
 		t.Fatalf("expected errPollTest, got %v", err)
 	}
-	if tx.execCalls != 1 {
-		t.Fatalf("expected 1 exec (activity only, baseline not reached), got %d", tx.execCalls)
+	if tx.execCalls != 2 {
+		t.Fatalf("expected 2 execs (lock + activity, baseline not reached), got %d", tx.execCalls)
 	}
 	if tx.committed || !tx.rolledBack {
 		t.Fatal("expected rollback, not commit")
@@ -146,7 +146,7 @@ func TestPollGameActivity_Rollback(t *testing.T) {
 func TestPollGameActivity_BaselineRollback(t *testing.T) {
 	tx := &fakePollTx{
 		histRow:     pollRow{val: 50},
-		execResults: []error{nil, errPollTest}, // activity ok, baseline fails
+		execResults: []error{nil, nil, errPollTest}, // lock ok, activity ok, baseline fails
 	}
 	usePollStarter(t, &fakePollStarter{tx})
 
@@ -154,8 +154,8 @@ func TestPollGameActivity_BaselineRollback(t *testing.T) {
 	if !errors.Is(err, errPollTest) {
 		t.Fatalf("expected errPollTest, got %v", err)
 	}
-	if tx.execCalls != 2 {
-		t.Fatalf("expected 2 execs, got %d", tx.execCalls)
+	if tx.execCalls != 3 {
+		t.Fatalf("expected 3 execs, got %d", tx.execCalls)
 	}
 	if tx.committed || !tx.rolledBack {
 		t.Fatal("expected rollback")
@@ -170,10 +170,10 @@ func TestPollGameActivity_RepeatedPoll(t *testing.T) {
 		name     string
 		oldPT    int
 		newPT    int
-		wantExec int // 1 = baseline only, 2 = activity + baseline
+		wantExec int // 2 = lock + baseline, 3 = lock + activity + baseline
 	}{
-		{"first poll (stored=100, new=100, no delta)", 100, 100, 1},
-		{"second poll same value",                    100, 100, 1},
+		{"first poll (stored=100, new=100, no delta)", 100, 100, 2},
+		{"second poll same value",                    100, 100, 2},
 	} {
 		t.Run(round.name, func(t *testing.T) {
 			tx := &fakePollTx{histRow: pollRow{val: round.oldPT}}
@@ -189,9 +189,10 @@ func TestPollGameActivity_RepeatedPoll(t *testing.T) {
 }
 
 // TestPollHistoryPostgres runs against a real disposable Postgres database.
-// It verifies rollback (activity failure does not advance baseline), first
-// observation, repeated polls (no duplicate activity), and concurrent
-// serialisation (SELECT FOR UPDATE prevents double-counting).
+// It verifies rollback and retry (activity failure does not advance the
+// baseline or lose minutes), first observation, repeated and stale polls (no
+// duplicate activity, no baseline regression), and concurrent serialisation
+// (the advisory lock prevents double-counting, even with no prior row).
 //
 // Set POLL_TEST_DATABASE_URL to a disposable PostgreSQL database to enable.
 func TestPollHistoryPostgres(t *testing.T) {
@@ -202,17 +203,22 @@ func TestPollHistoryPostgres(t *testing.T) {
 
 	ctx := context.Background()
 
+	schema := fmt.Sprintf("poll_qa_%d", time.Now().UnixNano())
+
 	cfg, err := pgxpool.ParseConfig(pgURL)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Set search_path on every connection the pool opens — a per-connection
+	// `SET search_path` would only affect one pooled connection, and the
+	// concurrent goroutines below get fresh connections.
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
 
-	schema := fmt.Sprintf("poll_qa_%d", time.Now().UnixNano())
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
@@ -221,8 +227,6 @@ func TestPollHistoryPostgres(t *testing.T) {
 	}
 	exec("CREATE SCHEMA " + schema)
 	defer pool.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE") //nolint:errcheck
-
-	exec("SET search_path TO " + schema)
 
 	// Save and restore globals.
 	oldDB, oldPool := db, dbPool
@@ -287,52 +291,82 @@ func TestPollHistoryPostgres(t *testing.T) {
 		t.Fatalf("repeated poll must not add minutes: got %d want 60", minutes)
 	}
 
-	// --- rollback: inject an activity write failure via a broken TX ---
-	// Verify the baseline is NOT advanced when activity write fails.
-	// We do this by using a connection whose write fails after the SELECT FOR UPDATE.
-	// Simplest approach: use a single-conn pool with a poisoned transaction that
-	// we can abort via savepoint.  Here we simulate it at the SQL level:
-	// start a tx that does the SELECT FOR UPDATE, inject an error for the
-	// activity INSERT, and verify the baseline stayed at 160.
-	func() {
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(ctx) //nolint:errcheck
+	// --- rollback: a trigger makes the activity INSERT inside recordGameActivity
+	// fail, so its transaction must roll back: no baseline advance, no minutes.
+	exec(`CREATE FUNCTION poll_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$ LANGUAGE plpgsql`)
+	exec(`CREATE TRIGGER poll_fail_trg BEFORE INSERT OR UPDATE ON play_activity FOR EACH ROW EXECUTE FUNCTION poll_fail()`)
 
-		var pt int
-		if err := tx.QueryRow(ctx, `SELECT playtime_total FROM play_history WHERE user_id='u1' AND app_id=1 FOR UPDATE`).Scan(&pt); err != nil {
-			t.Fatal(err)
-		}
-		delta := 200 - pt // would be 40
-		if delta <= 0 {
-			t.Fatal("expected positive delta in rollback test")
-		}
-		// Simulate activity write failure by referencing a non-existent table.
-		_, insertErr := tx.Exec(ctx, `INSERT INTO _no_such_table_ VALUES ($1)`, delta)
-		if insertErr == nil {
-			t.Fatal("expected error from bad insert")
-		}
-		// Don't commit — rollback via defer.
-	}()
-	// Baseline must still be 160 after the aborted transaction.
+	if err := recordGameActivity("u1", "s1", 1, "TestGame", 200, 60, now); err == nil {
+		t.Fatal("expected error from injected activity-write failure")
+	}
 	if err := pool.QueryRow(ctx, `SELECT playtime_total FROM play_history WHERE user_id='u1' AND app_id=1`).Scan(&baseline); err != nil {
 		t.Fatal(err)
 	}
 	if baseline != 160 {
 		t.Fatalf("rollback must not advance baseline: got %d want 160", baseline)
 	}
+	if err := pool.QueryRow(ctx, `SELECT minutes FROM play_activity WHERE user_id='u1' AND app_id=1 AND date=$1`, today).Scan(&minutes); err != nil {
+		t.Fatal(err)
+	}
+	if minutes != 60 {
+		t.Fatalf("failed poll must not record minutes: got %d want 60", minutes)
+	}
+
+	// --- retry after the failure: the failed poll lost nothing ---
+	exec(`DROP TRIGGER poll_fail_trg ON play_activity`)
+	if err := recordGameActivity("u1", "s1", 1, "TestGame", 200, 60, now); err != nil {
+		t.Fatalf("retry after rollback: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT playtime_total FROM play_history WHERE user_id='u1' AND app_id=1`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
+	if baseline != 200 {
+		t.Fatalf("retry must advance baseline: got %d want 200", baseline)
+	}
+	if err := pool.QueryRow(ctx, `SELECT minutes FROM play_activity WHERE user_id='u1' AND app_id=1 AND date=$1`, today).Scan(&minutes); err != nil {
+		t.Fatal(err)
+	}
+	if minutes != 100 {
+		t.Fatalf("retry must record the 40 minutes the failed poll saw: got %d want 100", minutes)
+	}
+
+	// --- stale poll: a smaller total must not lower the baseline or be
+	// double-counted when the real total comes back.
+	exec(`DELETE FROM play_activity WHERE user_id='u1' AND app_id=1`)
+	if err := recordGameActivity("u1", "s1", 1, "TestGame", 150, 60, now); err != nil {
+		t.Fatalf("stale poll: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM play_activity WHERE user_id='u1' AND app_id=1`).Scan(&actCount); err != nil {
+		t.Fatal(err)
+	}
+	if actCount != 0 {
+		t.Fatalf("stale poll must not record activity, got %d rows", actCount)
+	}
+	if err := pool.QueryRow(ctx, `SELECT playtime_total FROM play_history WHERE user_id='u1' AND app_id=1`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
+	if baseline != 200 {
+		t.Fatalf("stale poll must not lower baseline: got %d want 200", baseline)
+	}
+	if err := recordGameActivity("u1", "s1", 1, "TestGame", 220, 60, now); err != nil {
+		t.Fatalf("poll after stale: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(minutes),0) FROM play_activity WHERE user_id='u1' AND app_id=1 AND date=$1`, today).Scan(&minutes); err != nil {
+		t.Fatal(err)
+	}
+	if minutes != 20 {
+		t.Fatalf("poll after stale: got %d minutes, want 20 (220-200, not 220-150)", minutes)
+	}
 
 	// --- concurrent serialisation: two goroutines both try to add delta ---
-	// Both see baseline=160, new=220. Only one should win the FOR UPDATE lock;
-	// the second sees the already-updated baseline and records 0 extra minutes.
+	// Both see baseline=220, new=280. Only one should win the lock; the second
+	// sees the already-updated baseline and records 0 extra minutes.
 	exec(`DELETE FROM play_activity WHERE user_id='u1' AND app_id=1`)
 
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			done <- recordGameActivity("u1", "s1", 1, "TestGame", 220, 60, now)
+			done <- recordGameActivity("u1", "s1", 1, "TestGame", 280, 60, now)
 		}()
 	}
 	for i := 0; i < 2; i++ {
@@ -340,11 +374,38 @@ func TestPollHistoryPostgres(t *testing.T) {
 			t.Fatalf("concurrent poll: %v", err)
 		}
 	}
-	// Exactly 60 minutes total (220-160), not 120 (double-counted).
+	// Exactly 60 minutes total (280-220), not 120 (double-counted).
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(SUM(minutes),0) FROM play_activity WHERE user_id='u1' AND app_id=1 AND date=$1`, today).Scan(&minutes); err != nil {
 		t.Fatal(err)
 	}
 	if minutes != 60 {
 		t.Fatalf("concurrent polls double-counted: got %d want 60", minutes)
+	}
+
+	// --- concurrent first observation: no play_history row exists, so FOR
+	// UPDATE alone has nothing to lock; the advisory lock must serialise.
+	exec(`DELETE FROM play_activity WHERE user_id='u1' AND app_id=2`)
+	exec(`DELETE FROM play_history WHERE user_id='u1' AND app_id=2`)
+	for i := 0; i < 2; i++ {
+		go func() {
+			done <- recordGameActivity("u1", "s1", 2, "FreshGame", 100, 10, now)
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent first observation: %v", err)
+		}
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM play_activity WHERE user_id='u1' AND app_id=2`).Scan(&actCount); err != nil {
+		t.Fatal(err)
+	}
+	if actCount != 0 {
+		t.Fatalf("concurrent first observation must not record activity, got %d rows", actCount)
+	}
+	if err := pool.QueryRow(ctx, `SELECT playtime_total FROM play_history WHERE user_id='u1' AND app_id=2`).Scan(&baseline); err != nil {
+		t.Fatal(err)
+	}
+	if baseline != 100 {
+		t.Fatalf("concurrent first observation baseline: got %d want 100", baseline)
 	}
 }
