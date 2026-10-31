@@ -82,7 +82,7 @@ export default function PremiumStats({ userId, token, onUpgrade, busy }) {
             id="stats-search"
             type="search"
             value={filter.query}
-            onChange={e => setFilter(f => ({ ...f, query: e.target.value }))}
+            onChange={e => { const query = e.target.value; setFilter(f => ({ ...f, query })); }}
             placeholder="Search games…"
             aria-label="Search games"
           />
@@ -90,7 +90,7 @@ export default function PremiumStats({ userId, token, onUpgrade, busy }) {
             <input
               type="checkbox"
               checked={filter.activeOnly}
-              onChange={e => setFilter(f => ({ ...f, activeOnly: e.target.checked }))}
+              onChange={e => { const activeOnly = e.target.checked; setFilter(f => ({ ...f, activeOnly })); }}
             />
             {' '}Active in the last two weeks
           </label>
