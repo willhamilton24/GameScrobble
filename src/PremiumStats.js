@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './PremiumStats.css';
+import GameDeals from './GameDeals';
 
 export function formatPlaytime(minutes) {
   return `${Math.floor(minutes / 60).toLocaleString()}h ${minutes % 60}m`;
@@ -44,6 +45,10 @@ export default function PremiumStats({ userId, token, onUpgrade, busy }) {
   function changeSort(key) {
     setSort(previous => ({ key, descending: previous.key === key ? !previous.descending : key !== 'name' }));
   }
+
+  const topGameIds = state.games.slice().sort((a, b) =>
+    b.playtime_total - a.playtime_total || a.app_id - b.app_id
+  ).slice(0, 5).map(game => game.app_id);
 
   const hasFilters = filter.query !== '' || filter.activeOnly;
 
@@ -102,16 +107,17 @@ export default function PremiumStats({ userId, token, onUpgrade, busy }) {
             ? <p role="status">No games match your filters.</p>
             : <div className="stats-table-scroll" role="region" aria-label="Game stats table" tabIndex={0}>
                 <table>
-                  <caption>Your games — select a column to sort</caption>
+                  <caption>Your games — select a column to sort. Affiliate deals are shown for your five most-played games.</caption>
                   <thead><tr>{columns.map(([key, label]) => <th key={key} scope="col"
                     aria-sort={sort.key === key ? (sort.descending ? 'descending' : 'ascending') : 'none'}>
                     <button type="button" onClick={() => changeSort(key)}>{label}{sort.key === key ? (sort.descending ? ' ↓' : ' ↑') : ''}</button>
-                  </th>)}</tr></thead>
+                  </th>)}<th scope="col">Deals (affiliate links)</th></tr></thead>
                   <tbody>{games.map(game => <tr key={game.app_id}>
                     <th scope="row">{game.name || `Game ${game.app_id}`}</th>
                     <td>{formatPlaytime(game.playtime_total)}</td>
                     <td>{formatPlaytime(game.playtime_recent)}</td>
                     <td><time dateTime={game.last_polled}>{new Date(game.last_polled).toLocaleString()}</time></td>
+                    <td>{topGameIds.includes(game.app_id) ? <GameDeals title={game.name} /> : '—'}</td>
                   </tr>)}</tbody>
                 </table>
               </div>}

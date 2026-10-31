@@ -1,0 +1,4 @@
+.game-deals { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.8rem; color: #cbd5e1; white-space: normal; overflow-wrap: anywhere; }
+.game-deals small { font-size: 0.75rem; }
+.game-deals a { color: #67e8f9; text-decoration: underline; }
+.game-deals a:focus-visible { outline: 2px solid #67e8f9; outline-offset: 3px; }

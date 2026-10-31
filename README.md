@@ -66,7 +66,20 @@ gameroom tracks observed Steam playtime changes with a Go API, JWT accounts, pub
 - [x] Add game-name search and an active-in-last-two-weeks filter to `src/PremiumStats.js`, preserving the selected sort and providing a clear-filters action and distinct no-match state. Keep overall tracked-game totals separate from filtered totals; verify populated, zero-recent-playtime, and empty fixtures so subscribers can navigate larger histories without changing Premium access rules.
 - [ ] Prevent duplicate Premium subscriptions: have `createCheckoutSession` in `stripe.go` check the requested account's existing entitlement via the premium store and refuse to create a new Checkout session for an already-active subscriber, returning a distinct response the frontend explains. In `src/Account.js`, fetch `/api/premium/status` after sign-in and show the server-verified entitlement, replacing the Upgrade button with a Premium-active state. Verify active, inactive, and status-fetch-failure cases with local fixtures and Go tests using the in-memory premium store.
 - [ ] Let subscribers manage their subscription: add a `POST /api/stripe/portal` endpoint behind the existing JWT middleware that looks up the account's stored `stripe_customer_id` from `premium_users` and returns a Stripe test-mode Billing Portal session URL, with clear errors when no customer exists. Add a "Manage subscription" action to the signed-in account panel for premium accounts. Verify the no-customer, Stripe-error, and success paths with the in-memory store and mocked frontend responses, so paying users can cancel or update payment details without support tickets.
-- [ ] Surface the affiliate deals that already exist behind `GET /game/<title>/deals`: show tagged `deal_url` links (and `find_more_deals`) for a user's top games on the public profile and in the Premium stats table, clearly labeled as affiliate links. Handle game-not-found (404), empty offer lists, and an unset `AFFILIATE_PARTNER_TAG` gracefully without breaking the page. Verify with local fixtures covering offers-present, no-offers, and lookup-failure cases so the affiliate revenue stream has an actual user-facing surface.
+- [x] Surface the affiliate deals that already exist behind `GET /game/<title>/deals`: show tagged `deal_url` links (and `find_more_deals`) for a user's top games on the public profile and in the Premium stats table, clearly labeled as affiliate links. Handle game-not-found (404), empty offer lists, and an unset `AFFILIATE_PARTNER_TAG` gracefully without breaking the page. Verify with local fixtures covering offers-present, no-offers, and lookup-failure cases so the affiliate revenue stream has an actual user-facing surface.
+
+### Affiliate deals verification
+
+Public profile top-game cards and the five most-played games in the Premium
+stats table load `/game/<title>/deals`. Store links and **Find more deals** use
+the API-provided URLs and are labeled as affiliate links. An unset
+`AFFILIATE_PARTNER_TAG` leaves links usable without attribution; configuring the
+tag enables the endpoint's existing vendor-specific attribution. Missing games,
+empty offers, and lookup failures leave profile and stats content usable.
+
+Local fixtures in `src/fixtures/deals.json` cover tagged offers, empty offers,
+untagged URLs, and lookup failures on both surfaces. Run:
+`CI=true npm test -- --watch=false --runInBand --runTestsByPath src/GameDeals.test.js src/ProfilePage.test.js src/PremiumStats.test.js`
 
 ### Premium stats view verification
 
