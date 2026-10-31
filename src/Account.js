@@ -15,6 +15,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
   const [error, setError] = useState('');
   const [canRetry, setCanRetry] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [paymentProblem, setPaymentProblem] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -48,6 +49,15 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
         }
         const account = await response.json();
         setUser(account);
+        try {
+          const statusResp = await fetch('/api/premium/status', {
+            headers: { Authorization: `Bearer ${tokenAtStart}` }
+          });
+          if (mounted && statusResp && statusResp.ok) {
+            const statusData = await statusResp.json();
+            setPaymentProblem(!!statusData.payment_problem);
+          }
+        } catch (_) {}
       } catch (err) {
         if (!mounted) return;
         // Network/transport failure: keep token so the user can retry
@@ -100,6 +110,15 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
       localStorage.setItem(sessionKey, result.token);
       form.reset();
       setUser(result.user);
+      try {
+        const statusResp = await fetch('/api/premium/status', {
+          headers: { Authorization: `Bearer ${result.token}` }
+        });
+        if (statusResp && statusResp.ok) {
+          const statusData = await statusResp.json();
+          setPaymentProblem(!!statusData.payment_problem);
+        }
+      } catch (_) {}
     } catch (err) {
       setError(err.message);
     } finally {
@@ -120,6 +139,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
       setShowStats(false);
       setError('');
       setCanRetry(false);
+      setPaymentProblem(false);
       setMode('login');
     } catch (err) {
       setError("Unable to clear your session. Please clear this site\u2019s browser storage.");
@@ -153,6 +173,12 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
       {user ? (
         <div>
           <p>Signed in as {user.email}</p>
+          {paymentProblem && (
+            <p role="alert" className="payment-issue">
+              Your last payment failed. Please update your payment method to keep your Premium access.
+              Visit your billing settings or contact support to resolve this.
+            </p>
+          )}
           <p><a href={`/u/${encodeURIComponent(user.id)}`}>View your profile</a></p>
           <p><ExportDownload /></p>
           <button id="premium-checkout" type="button" disabled={busy} onClick={checkout}>Upgrade to Premium</button>
