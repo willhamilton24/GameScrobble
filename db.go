@@ -17,7 +17,14 @@ type database interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
+// txStarter opens a Postgres transaction. Kept separate from database so tests
+// can swap only the transactional path without affecting the query interface.
+type txStarter interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
 var db database
+var dbPool txStarter
 
 const dbTimeout = 5 * time.Second
 
@@ -35,6 +42,7 @@ func initDB(ctx context.Context) {
 		log.Fatal("failed to connect to database: ", err)
 	}
 	db = pool
+	dbPool = pool
 }
 
 func migrateDB(ctx context.Context) {
