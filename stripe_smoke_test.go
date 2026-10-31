@@ -502,4 +502,23 @@ func TestPaymentFailedFlagSetAndCleared(t *testing.T) {
 	if status.PaymentProblem {
 		t.Fatalf("expected payment_problem: false after invoice.payment_succeeded, got: %s", statusCtx.Response.Body())
 	}
+
+	// customer.subscription.deleted must also clear the flag, so a lapsed
+	// subscriber does not keep a stale payment banner.
+	payload = invoicePaymentFailedEvent(smokeCustomerID)
+	sig = signStripePayload(payload, smokeWebhookSecret, time.Now())
+	if ctx := doWebhookReq(payload, sig); ctx.Response.StatusCode() != 200 {
+		t.Fatalf("payment_failed webhook returned %d: %s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if got, _ := store.hasPaymentProblem(context.Background(), smokeUserID); !got {
+		t.Fatal("expected payment_problem to be set before subscription deletion")
+	}
+	payload = subscriptionDeletedEvent(smokeCustomerID)
+	sig = signStripePayload(payload, smokeWebhookSecret, time.Now())
+	if ctx := doWebhookReq(payload, sig); ctx.Response.StatusCode() != 200 {
+		t.Fatalf("subscription_deleted webhook returned %d: %s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if got, _ := store.hasPaymentProblem(context.Background(), smokeUserID); got {
+		t.Fatal("expected payment_problem to be cleared after customer.subscription.deleted")
+	}
 }

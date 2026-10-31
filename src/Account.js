@@ -55,7 +55,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
           });
           if (mounted && statusResp && statusResp.ok) {
             const statusData = await statusResp.json();
-            setPaymentProblem(!!statusData.payment_problem);
+            setPaymentProblem(!!statusData.premium && !!statusData.payment_problem);
           }
         } catch (_) {}
       } catch (err) {
@@ -116,7 +116,7 @@ export default function Account({ onUserChange, premiumRequest = 0 }) {
         });
         if (statusResp && statusResp.ok) {
           const statusData = await statusResp.json();
-          setPaymentProblem(!!statusData.payment_problem);
+          setPaymentProblem(!!statusData.premium && !!statusData.payment_problem);
         }
       } catch (_) {}
     } catch (err) {

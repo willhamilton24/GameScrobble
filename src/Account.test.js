@@ -185,6 +185,14 @@ it('does not show a payment-issue alert when payment_problem is false', async ()
   expect(root.querySelector('.payment-issue')).toBeNull();
 });
 
+it('does not show a payment-issue alert when the subscriber is no longer premium', async () => {
+  localStorage.setItem('gameroom.token', 'fixture-token');
+  fetch.mockImplementationOnce(() => response(account));
+  fetch.mockImplementationOnce(() => response({ premium: false, payment_problem: true, user_id: account.id }));
+  await render();
+  expect(root.querySelector('.payment-issue')).toBeNull();
+});
+
 it('clears the payment-issue alert on logout', async () => {
   localStorage.setItem('gameroom.token', 'fixture-token');
   fetch.mockImplementationOnce(() => response(account));

@@ -186,6 +186,10 @@ func handleStripeWebhook(c *routing.Context) error {
 			if err := premiums.deactivateByCustomer(customerID); err != nil {
 				return stripeProcessingError(c, event.ID, err)
 			}
+			// The subscription is gone, so the payment banner no longer applies.
+			if err := premiums.setPaymentProblem(customerID, false); err != nil {
+				return stripeProcessingError(c, event.ID, err)
+			}
 		}
 
 	case "invoice.payment_succeeded":
