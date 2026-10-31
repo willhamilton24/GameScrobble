@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
 import { act, Simulate } from 'react-dom/test-utils';
-import ProfilePage from './ProfilePage';
+import ProfilePage, { buildHeatmapWeeks } from './ProfilePage';
 import fixtures from './fixtures/profile.json';
 
 let root;
@@ -138,4 +138,114 @@ it('shows a selectable URL input when clipboard write is denied', async () => {
   const input = root.querySelector('.share-url');
   expect(input).not.toBe(null);
   expect(input.value).toBe(window.location.href);
+});
+
+// ── buildHeatmapWeeks pure-unit tests (UTC boundary, DST, year boundary, empty)
+
+it('buildHeatmapWeeks: UTC boundary date 2026-01-01 appears in generated weeks', () => {
+  const weeks = buildHeatmapWeeks([{ date: '2026-01-01', minutes: 90 }], '2026-10-31');
+  const allDays = weeks.flat();
+  const day = allDays.find(d => d.date === '2026-01-01');
+  expect(day).toBeDefined();
+  expect(day.minutes).toBe(90);
+});
+
+it('buildHeatmapWeeks: DST spring-forward 2026-03-08 and fall-back 2025-11-02 appear as distinct days', () => {
+  const weeks = buildHeatmapWeeks(
+    [{ date: '2025-11-02', minutes: 45 }, { date: '2026-03-08', minutes: 75 }],
+    '2026-10-31'
+  );
+  const allDays = weeks.flat();
+  const fallBack = allDays.find(d => d.date === '2025-11-02');
+  const springFwd = allDays.find(d => d.date === '2026-03-08');
+  expect(fallBack).toBeDefined();
+  expect(fallBack.minutes).toBe(45);
+  expect(springFwd).toBeDefined();
+  expect(springFwd.minutes).toBe(75);
+  expect(fallBack.date).not.toBe(springFwd.date);
+});
+
+it('buildHeatmapWeeks: Dec 31 and Jan 1 appear as distinct days across year boundary', () => {
+  const weeks = buildHeatmapWeeks(
+    [{ date: '2025-12-31', minutes: 30 }, { date: '2026-01-01', minutes: 60 }],
+    '2026-10-31'
+  );
+  const allDays = weeks.flat();
+  const dec31 = allDays.find(d => d.date === '2025-12-31');
+  const jan1 = allDays.find(d => d.date === '2026-01-01');
+  expect(dec31).toBeDefined();
+  expect(dec31.minutes).toBe(30);
+  expect(jan1).toBeDefined();
+  expect(jan1.minutes).toBe(60);
+  expect(dec31.date).not.toBe(jan1.date);
+});
+
+it('buildHeatmapWeeks: empty data produces 52 weeks of zero-minute days', () => {
+  const weeks = buildHeatmapWeeks([], '2026-10-31');
+  expect(weeks.length).toBeGreaterThanOrEqual(52);
+  expect(weeks.flat().every(d => d.minutes === 0)).toBe(true);
+});
+
+// ── Accessible readout and window-label DOM tests
+
+it('Activity section is labeled as a rolling window, separate from the calendar-year total', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.populated));
+  await render();
+  expect(root.textContent).toContain('Last 52 weeks');
+  expect(root.textContent).toContain('played this year');
+});
+
+it('clicking a heatmap cell shows its date and playtime in the readout', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.utcBoundary));
+  await render();
+  const cell = Array.from(root.querySelectorAll('[role=gridcell]'))
+    .find(el => (el.getAttribute('aria-label') || '').startsWith('2026-01-01'));
+  expect(cell).not.toBe(null);
+  await act(async () => { Simulate.click(cell); });
+  const readout = root.querySelector('.heatmap-readout');
+  expect(readout).not.toBe(null);
+  expect(readout.textContent).toContain('2026-01-01');
+  expect(readout.textContent).toContain('1h 30m');
+});
+
+it('focusing a heatmap cell shows its date in the readout', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.utcBoundary));
+  await render();
+  const cell = Array.from(root.querySelectorAll('[role=gridcell]'))
+    .find(el => (el.getAttribute('aria-label') || '').startsWith('2026-01-01'));
+  await act(async () => { Simulate.focus(cell); });
+  const readout = root.querySelector('.heatmap-readout');
+  expect(readout).not.toBe(null);
+  expect(readout.textContent).toContain('2026-01-01');
+});
+
+it('heatmap readout shows "No activity" for an empty cell', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.empty));
+  await render();
+  const cells = Array.from(root.querySelectorAll('[role=gridcell]'));
+  expect(cells.length).toBeGreaterThan(0);
+  await act(async () => { Simulate.click(cells[0]); });
+  const readout = root.querySelector('.heatmap-readout');
+  expect(readout).not.toBe(null);
+  expect(readout.textContent).toContain('No activity');
+});
+
+it('year-boundary fixture renders both Dec 31 and Jan 1 cells', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.yearBoundary));
+  await render();
+  const cells = Array.from(root.querySelectorAll('[role=gridcell]'));
+  const dec31 = cells.find(el => (el.getAttribute('aria-label') || '').startsWith('2025-12-31'));
+  const jan1 = cells.find(el => (el.getAttribute('aria-label') || '').startsWith('2026-01-01'));
+  expect(dec31).toBeDefined();
+  expect(jan1).toBeDefined();
+});
+
+it('DST boundary fixture renders spring-forward and fall-back cells', async () => {
+  fetch.mockImplementationOnce(() => response(fixtures.dstBoundary));
+  await render();
+  const cells = Array.from(root.querySelectorAll('[role=gridcell]'));
+  const fallBack = cells.find(el => (el.getAttribute('aria-label') || '').startsWith('2025-11-02'));
+  const springFwd = cells.find(el => (el.getAttribute('aria-label') || '').startsWith('2026-03-08'));
+  expect(fallBack).toBeDefined();
+  expect(springFwd).toBeDefined();
 });

@@ -17,39 +17,49 @@ function heatColor(minutes) {
   return '#00d4ff';
 }
 
-function Heatmap({ data }) {
-  const today = new Date();
-  const start = new Date(today);
-  start.setDate(start.getDate() - 363);
-  start.setDate(start.getDate() - start.getDay()); // align to Sunday
+function addUTCDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 
+export function buildHeatmapWeeks(data, todayStr) {
   const byDate = {};
   (data || []).forEach(function(d) { byDate[d.date] = d.minutes; });
 
+  let startStr = addUTCDays(todayStr, -363);
+  const dow = new Date(startStr + 'T00:00:00Z').getUTCDay();
+  if (dow > 0) startStr = addUTCDays(startStr, -dow);
+
   const weeks = [];
-  const cur = new Date(start);
-  while (cur <= today) {
+  let curStr = startStr;
+  while (curStr <= todayStr) {
     const week = [];
     for (let d = 0; d < 7; d++) {
-      const dateStr = cur.toISOString().slice(0, 10);
-      week.push({ date: dateStr, minutes: byDate[dateStr] || 0 });
-      cur.setDate(cur.getDate() + 1);
+      week.push({ date: curStr, minutes: byDate[curStr] || 0 });
+      curStr = addUTCDays(curStr, 1);
     }
     weeks.push(week);
   }
+  return weeks;
+}
+
+function Heatmap({ data }) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const weeks = buildHeatmapWeeks(data, todayStr);
+  const [activeDay, setActiveDay] = useState(null);
 
   const CELL = 11;
   const GAP = 2;
-  const w = weeks.length * (CELL + GAP);
-  const h = 7 * (CELL + GAP);
+  const svgW = weeks.length * (CELL + GAP);
+  const svgH = 7 * (CELL + GAP);
 
-  // Month labels
   const months = [];
   let lastMonth = -1;
   weeks.forEach(function(week, wi) {
-    const m = new Date(week[0].date).getUTCMonth();
+    const m = new Date(week[0].date + 'T00:00:00Z').getUTCMonth();
     if (m !== lastMonth) {
-      const label = new Date(week[0].date).toLocaleString('default', { month: 'short', timeZone: 'UTC' });
+      const label = new Date(week[0].date + 'T00:00:00Z').toLocaleString('default', { month: 'short', timeZone: 'UTC' });
       months.push({ x: wi * (CELL + GAP), label: label });
       lastMonth = m;
     }
@@ -57,7 +67,7 @@ function Heatmap({ data }) {
 
   return (
     <div className="heatmap-wrap">
-      <svg width={w} height={h + 18} style={{ overflow: 'visible', display: 'block' }}>
+      <svg width={svgW} height={svgH + 18} style={{ overflow: 'visible', display: 'block' }}>
         {months.map(function(m, i) {
           return (
             <text key={i} x={m.x} y={10} fontSize={9} fill="#475569" fontFamily="inherit">
@@ -67,6 +77,7 @@ function Heatmap({ data }) {
         })}
         {weeks.map(function(week, wi) {
           return week.map(function(day, di) {
+            const cellLabel = day.date + ': ' + (day.minutes > 0 ? formatHours(day.minutes) : 'No activity');
             return (
               <rect
                 key={wi + '-' + di}
@@ -76,13 +87,25 @@ function Heatmap({ data }) {
                 height={CELL}
                 rx={2}
                 fill={heatColor(day.minutes)}
+                tabIndex={0}
+                role="gridcell"
+                aria-label={cellLabel}
+                onFocus={function() { setActiveDay(day); }}
+                onClick={function() { setActiveDay(day); }}
+                onKeyDown={function(e) { if (e.key === 'Enter' || e.key === ' ') setActiveDay(day); }}
+                style={{ cursor: 'pointer' }}
               >
-                <title>{day.date}: {day.minutes > 0 ? formatHours(day.minutes) : 'No activity'}</title>
+                <title>{cellLabel}</title>
               </rect>
             );
           });
         })}
       </svg>
+      {activeDay && (
+        <div role="status" aria-live="polite" className="heatmap-readout">
+          {activeDay.date}: {activeDay.minutes > 0 ? formatHours(activeDay.minutes) : 'No activity'}
+        </div>
+      )}
       <div className="heatmap-legend">
         <span>Less</span>
         {[0, 30, 90, 180, 240].map(function(m, i) {
@@ -238,6 +261,7 @@ function ProfilePage({ userId }) {
       <section className="section">
         <div className="section-header">
           <h2 className="section-title">Activity</h2>
+          <p className="section-subtitle">Last 52 weeks</p>
         </div>
         <div className="heatmap-card">
           <Heatmap data={profile.heatmap} />

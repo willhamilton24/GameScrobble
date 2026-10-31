@@ -155,6 +155,14 @@
   margin: 0;
 }
 
+.section-subtitle {
+  font-size: 0.7rem;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0.2rem 0 0;
+}
+
 /* ── Heatmap ─────────────────────────────────────────────── */
 
 .heatmap-card {
@@ -188,6 +196,12 @@
   height: 11px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+.heatmap-readout {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 0.5rem;
 }
 
 /* ── Games grid ──────────────────────────────────────────── */
