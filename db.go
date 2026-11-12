@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS premium_users (
     premium_until      TIMESTAMPTZ NOT NULL,
     stripe_customer_id TEXT        NOT NULL DEFAULT ''
 );
+ALTER TABLE premium_users ADD COLUMN IF NOT EXISTS payment_problem BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS games (
     title              TEXT  PRIMARY KEY,
     img                TEXT  NOT NULL DEFAULT '',
